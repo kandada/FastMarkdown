@@ -1,0 +1,22 @@
+[package]
+name = "fastmarkdown"
+version = "0.1.0"
+edition = "2021"
+description = "Blazing fast cross-platform Markdown renderer with native object output for iOS/Android"
+license = "Apache-2.0"
+authors = ["xiefujin <490021684@qq.com>"]
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html", "simd"] }
+ammonia = "4"
+thiserror = "2"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "render"
+harness = false
