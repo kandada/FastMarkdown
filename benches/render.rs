@@ -2,7 +2,7 @@
 // Licensed under Apache-2.0, see LICENSE file for full license terms.
 
 use criterion::{black_box, Criterion};
-use fastmarkdown::{to_html, to_spans, to_plain_text, MarkdownOptions, MathMode, HtmlMode};
+use fastmarkdown::{to_html, to_spans, to_plain_text, MarkdownOptions, MathMode};
 
 fn bench_html_basic(c: &mut Criterion) {
     let md = "# Hello World\n\nThis is a **bold** and *italic* paragraph with `code`.\n\n- list item 1\n- list item 2\n\n```rust\nfn main() {}\n```";

@@ -100,7 +100,8 @@ fn find_closing_display_math(bytes: &[u8], start: usize) -> Option<usize> {
 fn find_closing_inline_math(bytes: &[u8], start: usize) -> Option<usize> {
     let mut i = start;
     while i < bytes.len() {
-        if bytes[i] == b'\n' {
+        if bytes[i] == b'\n' || bytes[i] == b'\r' {
+            // Inline math must be on a single line; CR or LF terminates it
             return None;
         }
         if bytes[i] == b'$' {

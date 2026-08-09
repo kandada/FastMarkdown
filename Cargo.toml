@@ -13,6 +13,11 @@ crate-type = ["lib", "staticlib", "cdylib"]
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html", "simd"] }
 ammonia = "4"
 thiserror = "2"
+syntect = { version = "5", default-features = false, features = ["parsing", "default-syntaxes", "regex-fancy"], optional = true }
+
+[features]
+default = []
+highlight = ["syntect"]
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

@@ -42,7 +42,7 @@ pub fn markdown_to_plain_text(md: &str, options: &MarkdownOptions) -> String {
             }
             Event::Html(html) | Event::InlineHtml(html) => {
                 // Strip HTML tags in plain text mode
-                let stripped = strip_html_tags(&html);
+                let stripped = crate::strip_html_tags(&html);
                 output.push_str(&stripped);
             }
             _ => {}
@@ -53,20 +53,6 @@ pub fn markdown_to_plain_text(md: &str, options: &MarkdownOptions) -> String {
     let result = output.trim().to_string();
     // Collapse multiple spaces
     collapse_spaces(&result)
-}
-
-fn strip_html_tags(html: &str) -> String {
-    let mut result = String::new();
-    let mut in_tag = false;
-    for c in html.chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => result.push(c),
-            _ => {}
-        }
-    }
-    result
 }
 
 fn collapse_spaces(s: &str) -> String {

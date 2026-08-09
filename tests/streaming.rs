@@ -167,3 +167,105 @@ fn test_stream_delta_new_content() {
     let delta = stream.delta(" end");
     assert!(!delta.deltas.is_empty());
 }
+
+// ================================================================
+//  Fast-path streaming tests
+// ================================================================
+
+#[test]
+fn test_stream_fast_path_avoid_full_reparse() {
+    // This test verifies that plain text chunks use the fast path
+    // and produce the same result as full parsing
+    let mut stream = StreamRenderer::new(MarkdownOptions::default());
+
+    // Build markdown structure first
+    stream.append("# Title\n\n");
+    let out = stream.append("Paragraph");
+
+    let text = unsafe {
+        std::str::from_utf8(std::slice::from_raw_parts(out.text, out.text_len as usize))
+            .unwrap()
+    };
+    assert!(text.contains("Title"));
+    assert!(text.contains("Paragraph"));
+    assert!(out.span_count > 0);
+
+    // Now extend the paragraph with plain text (should use fast path)
+    let out2 = stream.append(" with more content");
+    let text2 = unsafe {
+        std::str::from_utf8(std::slice::from_raw_parts(out2.text, out2.text_len as usize))
+            .unwrap()
+    };
+    assert!(text2.contains("with more content"));
+
+    // Build same thing in one shot for comparison
+    let expected = to_spans("# Title\n\nParagraph with more content");
+    let expected_text = unsafe {
+        std::str::from_utf8(std::slice::from_raw_parts(
+            expected.text, expected.text_len as usize,
+        )).unwrap()
+    };
+    assert_eq!(text2, expected_text);
+    unsafe { free_spans(expected); }
+}
+
+#[test]
+fn test_stream_fast_path_with_special_chars_falls_back() {
+    // Special characters should trigger full re-parse
+    let mut stream = StreamRenderer::new(MarkdownOptions::default());
+    stream.append("Hello");
+
+    // * triggers fallback to full parse
+    let out = stream.append(" *italic*");
+    let spans = unsafe {
+        std::slice::from_raw_parts(out.spans as *const Span, out.span_count as usize)
+    };
+    assert!(spans.iter().any(|s| s.is_italic()), "Should detect italic");
+}
+
+#[test]
+fn test_stream_fast_path_with_code_block_falls_back() {
+    // Code blocks should NOT use fast path (safety)
+    let mut stream = StreamRenderer::new(MarkdownOptions::default());
+    stream.append("```rust\n");
+
+    // Appending to code block — should use slow path
+    let out = stream.append("fn main() {}\n");
+    let text = unsafe {
+        std::str::from_utf8(std::slice::from_raw_parts(out.text, out.text_len as usize))
+            .unwrap()
+    };
+    assert!(text.contains("fn main()"));
+}
+
+#[test]
+fn test_stream_fast_path_many_small_chunks() {
+    // Simulate token-level streaming (AI agents)
+    let mut stream = StreamRenderer::new(MarkdownOptions::default());
+
+    let tokens: [&str; 11] = ["H","e","l","l","o"," ","W","o","r","l","d"];
+    for ch in &tokens {
+        stream.append(ch);
+    }
+
+    let out = stream.append("!");
+    let text = unsafe {
+        std::str::from_utf8(std::slice::from_raw_parts(out.text, out.text_len as usize))
+            .unwrap()
+    };
+    assert_eq!(text, "Hello World!");
+}
+
+#[test]
+fn test_stream_fast_path_reset_clears_state() {
+    let mut stream = StreamRenderer::new(MarkdownOptions::default());
+    stream.append("First message");
+    stream.reset();
+
+    let out = stream.append("Second");
+    let text = unsafe {
+        std::str::from_utf8(std::slice::from_raw_parts(out.text, out.text_len as usize))
+            .unwrap()
+    };
+    assert_eq!(text, "Second");
+}

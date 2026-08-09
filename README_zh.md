@@ -30,8 +30,11 @@ fastmarkdown 的解决方案：
 - **完整 GFM 支持** — 标题、粗体、斜体、删除线、行内代码、代码块、链接、图片、有序/无序列表、引用、表格、分割线、任务列表、脚注
 - **HTML 标签混排** — `<b>`、`<i>`、`<a>`、`<img>`、`<table>`、`<details>` 等，三种安全模式（Strip / Safe / AllowAll）
 - **`$` 符号智能处理** — 字面模式无视 `$HOME`、`$5.99`；可选检测模式识别 LaTeX 公式
+- **可选代码高亮** — `highlight` feature flag + `MarkdownOptions::highlight = true`。输出 15 类 token 流至 extra_data (kind=4)，宿主按类型映射颜色。不启用时零成本
 - **流式 API** — 原生 token 级增量追加，适配实时 AI 输出
 - **双路输出** — HTML 字符串（WebView/导出）+ 结构化 Span 数组（原生渲染）
+- **文件预览块结构** — `block_seq`、`block_depth`、表格 metadata，存储于自描述 `extra_data` 二进制格式
+- **extradata 自描述格式** — `[kind: u8, len: u16 LE, data]` 分块，支持 link URL、image URL、代码语言、表格 metadata、代码高亮 token
 - **C FFI** — 编译为静态/动态库，可从 Swift、Kotlin、C、Python 调用
 - **跨平台** — iOS (aarch64-apple-ios)、Android (aarch64-linux-android)、macOS/Linux/Windows
 
@@ -219,9 +222,113 @@ cargo build --release --target aarch64-linux-android
 
 ## 使用场景
 
+### Chat / AI 消息
+
+fastmarkdown 为聊天消息渲染优化：一条消息 → flat span 数组 → 平台适配器 → 一个 `NSAttributedString`/`SpannableString` → 一个 `UITextView`。消除 View 爆炸，渲染性能稳定可预测。
+
+### 文件预览 / 文档查看
+
+Span 输出携带 `block_seq`、`block_depth` 以及自描述 `extra_data`：
+
+| 字段 | 大小 | 用途 |
+|------|------|------|
+| `block_seq` | u16 | 每块唯一序号；按 seq 分组 → N 个 block，适配 LazyVStack 懒加载 |
+| `block_depth` | u8 | 列表/引用嵌套层级；`depth × 每级缩进` → UI 缩进 |
+| `block_type` | u8 | 段落、标题、代码块、表格单元格、列表项等 |
+| `extra_data` | bytes | `[kind:u8, len:u16 LE, data]` 分块，包含 link URL、代码语言、表格 metadata（列数 + 对齐 + **每列最大字符宽度**） |
+
+**表格 metadata chunk** (kind=3)：`[col_count: u8, (align: u8, char_width: u16 LE)*N]` — `char_width` 为每列所有行中的最大字符数，宿主可直接用于列宽估算，无需逐 cell 测量文本。
+
+**消费者使用指南：**
+
+```rust
+// 1. 重建 block 结构
+let mut blocks: Vec<Vec<&Span>> = vec![];
+let mut current_seq = spans[0].block_seq;
+let mut current: Vec<&Span> = vec![];
+for s in spans {
+    if s.block_seq != current_seq { blocks.push(current); current = vec![]; current_seq = s.block_seq; }
+    current.push(s);
+}
+
+// 2. 解析 extra_data 分块
+let mut pos = 0;
+while pos + 3 <= extra.len() {
+    let kind = extra[pos];
+    let len = u16::from_le_bytes([extra[pos + 1], extra[pos + 2]]) as usize;
+    let data = &extra[pos + 3..pos + 3 + len];
+    match kind {
+        2 => println!("代码语言: {}", str::from_utf8(data).unwrap()),
+        3 => println!("表格: {} 列, 对齐: {:?}", data[0], &data[1..]),
+        _ => {}
+    }
+    pos += 3 + len;
+}
+
+// 3. 重建表格行
+let col_count = table_meta[0] as usize;
+let data_cells: Vec<_> = spans.iter().filter(|s| s.block_type == BLOCK_TABLE_CELL).collect();
+for row in data_cells.chunks(col_count) { /* 渲染行 */ }
+```
+
+参见 `tests/block_structure.rs` 和 `tests/consumer_verify.rs` 中的完整示例。
+
 fastmarkdown 已用于：
 
 - [**AACode**](https://github.com/kandada/aacode) — 移动端 AI 编程助手 (iOS)
+
+---
+
+## 代码高亮（可选）
+
+通过 `features = ["highlight"]` 启用，`MarkdownOptions::highlight = true` 开启。
+
+**Token 类型**（syntect scope 映射为 15 种通用类型）：
+
+| id | 类型 | id | 类型 | id | 类型 |
+|----|------|----|------|----|------|
+| 0 | 其他 | 5 | 函数 | 10 | 常量 |
+| 1 | 关键字 | 6 | 类型 | 11 | 内置 |
+| 2 | 字符串 | 7 | 运算符 | 12 | 实体 |
+| 3 | 注释 | 8 | 标点 | 13 | 标记 |
+| 4 | 数字 | 9 | 变量 | 14 | 正则 |
+
+**宿主消费**（Swift 示例）：
+```swift
+// 读取 extra_data kind=4 chunk（紧跟 kind=2 语言 chunk）
+let tokens = parseHighlightChunk(extra)
+var pos = 0
+for (type, len) in tokens {
+    let range = NSRange(location: pos, length: Int(len))
+    attrString.addAttribute(.foregroundColor, value: highlightColors[Int(type)], range: range)
+    pos += Int(len)
+}
+```
+
+**零成本关闭**：`highlight` 是编译期 feature flag。不启用时无 syntect 依赖、无体积膨胀、无运行时开销。
+
+支持语言：Sublime Text 语法定义中的全部语言（100+，包括 rust、python、swift、kotlin、bash、javascript、c、c++、java、go 等）。
+
+### 集成清单
+
+使用代码高亮需要完成三步：
+
+1. **启用编译期 feature**
+   ```
+   cargo build --features highlight --release
+   ```
+   不加 `--features highlight` 则不编译 syntect，不产生高亮 chunk。体积影响：iOS `.a` 约 +1.2MB。
+
+2. **启用运行时选项**
+   ```rust
+   let mut opts = MarkdownOptions::default();
+   opts.highlight = true;  // 默认 false
+   let output = to_spans_with_options(md, &opts);
+   ```
+   或通过 FFI：调用 `fastmarkdown_to_spans_ex` 时传入 `highlight=1`。
+
+3. **宿主消费高亮 chunk**
+   `extra_data` 中包含 `kind=4` chunk（每个代码块紧跟 `kind=2` 语言 chunk 之后）。解析 chunk 格式并按类型着色。参见上方 Swift 示例。
 
 ---
 

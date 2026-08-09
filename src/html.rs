@@ -6,6 +6,9 @@ use pulldown_cmark::{html, Parser};
 use crate::options::{HtmlMode, MarkdownOptions};
 
 pub fn markdown_to_html(md: &str, options: &MarkdownOptions) -> String {
+    if md.len() > u32::MAX as usize {
+        return String::new();
+    }
     let md = if options.html_mode == HtmlMode::Strip {
         strip_html_tags_full(md)
     } else {
@@ -34,27 +37,26 @@ fn preprocess_math(md: &str, options: &MarkdownOptions) -> String {
         return md.to_string();
     }
 
-    // Sort regions by start position (descending for replacement)
-    let mut sorted: Vec<_> = regions.iter().collect();
-    sorted.sort_by(|a, b| b.start.cmp(&a.start));
-
-    let mut result = md.to_string();
-    for region in &sorted {
-        let content = &md[region.start..region.end];
+    // Build result linearly: iterate through md, copying non-math text directly
+    // and replacing math regions inline. This avoids stale indices from replace_range.
+    let mut result = String::with_capacity(md.len());
+    let mut pos = 0;
+    for region in &regions {
+        // Copy text before the math region
+        result.push_str(&md[pos..region.start]);
         if region.is_display {
-            let replacement = format!(
-                "\n<div class=\"math math-block\">{}</div>\n",
-                &content[2..content.len() - 2]
-            );
-            result.replace_range(region.start..region.end, &replacement);
+            result.push_str("\n<div class=\"math math-block\">");
+            result.push_str(&md[region.start + 2..region.end - 2]);
+            result.push_str("</div>\n");
         } else {
-            let replacement = format!(
-                "<span class=\"math math-inline\">{}</span>",
-                &content[1..content.len() - 1]
-            );
-            result.replace_range(region.start..region.end, &replacement);
+            result.push_str("<span class=\"math math-inline\">");
+            result.push_str(&md[region.start + 1..region.end - 1]);
+            result.push_str("</span>");
         }
+        pos = region.end;
     }
+    // Copy remaining text
+    result.push_str(&md[pos..]);
 
     result
 }
@@ -70,19 +72,7 @@ fn sanitize_if_needed(output: String, options: &MarkdownOptions) -> String {
 }
 
 fn strip_html_tags_full(html: &str) -> String {
-    let mut result = String::with_capacity(html.len());
-    let mut in_tag = false;
-    for c in html.chars() {
-        match c {
-            '<' if !in_tag => in_tag = true,
-            '>' if in_tag => {
-                in_tag = false;
-            }
-            _ if !in_tag => result.push(c),
-            _ => {}
-        }
-    }
-    result
+    crate::strip_html_tags(html)
 }
 
 fn apply_code_class_prefix(html: &str, options: &MarkdownOptions) -> String {
@@ -106,29 +96,54 @@ fn resolve_relative_links(html: &str, options: &MarkdownOptions) -> String {
         _ => return html.to_string(),
     };
 
-    // Replace relative href/src that start with /
-    let mut result = html.to_string();
-    // Match href="/path" or src="/path"
-    for attr in &["href=\"", "src=\""] {
-        let pattern = format!("{attr}/");
-        // Only replace if not already a full URL
-        let mut out = String::with_capacity(result.len());
-        let mut last_end = 0;
-        for (idx, _) in result.match_indices(&pattern) {
-            // Check preceding char: if it's http:// or https://, skip
-            if idx >= 8 && &result[idx - 8..idx] == "https://" {
-                continue;
+    let mut result = String::with_capacity(html.len());
+    let mut last_end = 0;
+
+    let attr_pairs = [("href=\"", 6), ("src=\"", 5)];
+
+    loop {
+        let mut earliest: Option<(usize, usize, usize)> = None;
+        for &(attr, attr_len) in &attr_pairs {
+            if let Some(idx) = html[last_end..].find(attr) {
+                let abs_idx = last_end + idx;
+                let after_attr = abs_idx + attr_len;
+                match earliest {
+                    None => earliest = Some((abs_idx, attr_len, after_attr)),
+                    Some((e, _, _)) if abs_idx < e => earliest = Some((abs_idx, attr_len, after_attr)),
+                    _ => {}
+                }
             }
-            if idx >= 7 && &result[idx - 7..idx] == "http://" {
-                continue;
-            }
-            out.push_str(&result[last_end..idx + attr.len()]);
-            out.push_str(base);
-            last_end = idx + attr.len();
         }
-        out.push_str(&result[last_end..]);
-        result = out;
+
+        let (_, _, after_attr) = match earliest {
+            Some(e) => e,
+            None => break,
+        };
+
+        result.push_str(&html[last_end..after_attr]);
+
+        // Check if the URL is already absolute
+        let rest = &html[after_attr..];
+        let is_absolute = rest.starts_with("https://")
+            || rest.starts_with("http://")
+            || rest.starts_with("//")
+            || rest.starts_with("ftp://")
+            || rest.starts_with("mailto:");
+
+        if is_absolute {
+            last_end = after_attr;
+        } else {
+            // Prepend base URL for relative paths
+            result.push_str(base);
+            // Ensure path separator if the relative URL doesn't start with /
+            if !rest.starts_with('/') {
+                result.push('/');
+            }
+            last_end = after_attr;
+        }
     }
+
+    result.push_str(&html[last_end..]);
     result
 }
 

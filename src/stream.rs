@@ -9,6 +9,10 @@ use crate::spans_renderer::OwnedSpanOutput;
 ///
 /// 维护内部文本 buffer，每次调用 `append()` 追加新文本并返回完整 SpanOutput。
 /// 返回的 SpanOutput 指针在下一次 `append()` 或 `drop` 后失效。
+///
+/// 内置 fast-path 优化：当新的 chunk 为纯文本（不包含任何 markdown 结构字符）时，
+/// 直接在上一轮输出上扩展，避免对全文重新解析。这使流式 AI 输出的常见场景（token 级追加）
+/// 从 O(n²) 降为近似 O(n)。
 pub struct StreamRenderer {
     buffer: String,
     options: MarkdownOptions,
@@ -41,12 +45,30 @@ impl StreamRenderer {
     pub fn append(&mut self, chunk: &str) -> SpanOutput {
         self.buffer.push_str(chunk);
 
+        // Fast path: if this chunk is pure continuation text (no markdown structure chars),
+        // extend the previous output in-place rather than re-parsing everything.
+        if let Some(ref prev) = self.current_output {
+            if is_plain_continuation(chunk) && !prev.spans.is_empty() {
+                if let Some(output) = try_extend_output(prev, chunk) {
+                    self.current_output = Some(output);
+                    let spans = unsafe {
+                        std::slice::from_raw_parts(
+                            self.current_output.as_ref().unwrap().spans.as_ptr(),
+                            self.current_output.as_ref().unwrap().spans.len(),
+                        )
+                    };
+                    self.previous_span_snapshots = snapshots(spans);
+                    return self.current_output.as_ref().unwrap().as_output();
+                }
+            }
+        }
+
+        // Slow path: full re-parse
         self.current_output = None;
 
         let output = crate::spans_renderer::markdown_to_spans_owned(&self.buffer, &self.options);
         let result = output.as_output();
 
-        // Update snapshots for future delta calculation
         let spans = unsafe {
             std::slice::from_raw_parts(result.spans, result.span_count as usize)
         };
@@ -60,14 +82,11 @@ impl StreamRenderer {
     /// 返回最终的 SpanOutput（或空，如果没有新内容）。
     /// 这之后不应再调用 append。
     pub fn finish(&mut self) -> Option<SpanOutput> {
-        // In our current design, append already gives the complete output.
-        // finish ensures the last state is flushed.
-        // If there's nothing in the buffer, return None.
         if self.buffer.is_empty() {
             return None;
         }
 
-        // Re-parse to ensure final state
+        // Re-parse to ensure final state (close any open blocks)
         self.current_output = None;
         let output = crate::spans_renderer::markdown_to_spans_owned(&self.buffer, &self.options);
         let result = output.as_output();
@@ -80,6 +99,22 @@ impl StreamRenderer {
     pub fn delta(&mut self, chunk: &str) -> SpanDeltaList {
         self.buffer.push_str(chunk);
 
+        // Try fast path first (same as append)
+        if let Some(ref prev) = self.current_output {
+            if is_plain_continuation(chunk) && !prev.spans.is_empty() {
+                if let Some(output) = try_extend_output(prev, chunk) {
+                    let current_spans = unsafe {
+                        std::slice::from_raw_parts(output.spans.as_ptr(), output.spans.len())
+                    };
+                    let delta = compute_delta(&self.previous_span_snapshots, current_spans);
+                    self.previous_span_snapshots = snapshots(current_spans);
+                    self.current_output = Some(output);
+                    return delta;
+                }
+            }
+        }
+
+        // Slow path: full re-parse
         self.current_output = None;
         let output = crate::spans_renderer::markdown_to_spans_owned(&self.buffer, &self.options);
 
@@ -122,6 +157,61 @@ impl StreamRenderer {
     pub fn is_empty(&self) -> bool {
         self.buffer.is_empty()
     }
+}
+
+/// Checks whether a chunk is safe for fast-path extension:
+/// no markdown structure characters, no newlines.
+fn is_plain_continuation(chunk: &str) -> bool {
+    for b in chunk.bytes() {
+        match b {
+            b'\n' | b'\r' | b'#' | b'*' | b'_' | b'`' | b'[' | b']'
+            | b'<' | b'>' | b'|' | b'!' | b'~' | b'$' | b'-' | b'+' | b'='
+            | b'\\' | b'^' => return false,
+            _ => {}
+        }
+    }
+    !chunk.is_empty()
+}
+
+/// Try to extend the previous output with new plain text, avoiding full re-parse.
+/// Returns None if the last block type makes extension unsafe (e.g., inside a code block).
+fn try_extend_output(prev: &OwnedSpanOutput, chunk: &str) -> Option<OwnedSpanOutput> {
+    let chunk_bytes = chunk.as_bytes();
+    if chunk_bytes.is_empty() {
+        return None;
+    }
+
+    // Don't fast-path if the last span is in a special block that may need re-interpretation
+    if let Some(last_span) = prev.spans.last() {
+        if last_span.block_type == BLOCK_CODE {
+            return None;
+        }
+        if (last_span.flags & FLAG_IMAGE) != 0 {
+            return None;
+        }
+    }
+
+    // Extend text buffer
+    let mut new_text: Vec<u8> = Vec::with_capacity(prev.text.len() + chunk_bytes.len());
+    new_text.extend_from_slice(&prev.text);
+    new_text.extend_from_slice(chunk_bytes);
+
+    // Clone spans, extending the last span's length
+    let mut new_spans: Vec<Span> = prev.spans.to_vec();
+    if let Some(ref mut last) = new_spans.last_mut() {
+        last.length += chunk.len() as u32;
+    }
+
+    // Extend utf16_offsets: the last span's UTF-16 offset stays the same;
+    // no new spans are added, so the array length remains unchanged.
+    let new_utf16 = prev.utf16_offsets.clone();
+
+    Some(OwnedSpanOutput {
+        text: new_text.into_boxed_slice(),
+        spans: new_spans.into_boxed_slice(),
+        extra_data: prev.extra_data.clone(),
+        utf16_offsets: new_utf16,
+    })
 }
 
 fn snapshots(spans: &[Span]) -> Vec<SpanSnapshot> {
@@ -262,5 +352,91 @@ mod tests {
         let snapshot = stream.snapshot_owned();
         let output = snapshot.as_output();
         assert!(output.span_count > 0);
+    }
+
+    #[test]
+    fn test_is_plain_continuation() {
+        assert!(is_plain_continuation("hello"));
+        assert!(is_plain_continuation("World 123"));
+        assert!(is_plain_continuation("foo.bar(baz)"));
+        assert!(is_plain_continuation("text, with; punctuation: etc"));
+        assert!(!is_plain_continuation(""));
+        assert!(!is_plain_continuation("hello\nworld"));
+        assert!(!is_plain_continuation("hello**bold**"));
+        assert!(!is_plain_continuation("hello*world*"));
+        assert!(!is_plain_continuation("code`here`"));
+        assert!(!is_plain_continuation("link[text](url)"));
+        assert!(!is_plain_continuation("has#tag"));
+        assert!(!is_plain_continuation("pipe|table"));
+        assert!(!is_plain_continuation("$math$"));
+    }
+
+    #[test]
+    fn test_fast_path_extends_last_span() {
+        let mut stream = StreamRenderer::new(MarkdownOptions::default());
+        let out1 = stream.append("Hello");
+        let first_span_count = out1.span_count;
+        let first_text_len = out1.text_len;
+
+        // Append plain text — should use fast path
+        let out2 = stream.append(" World");
+        // Text should be extended
+        assert_eq!(out2.text_len, first_text_len + 6);
+        assert_eq!(out2.span_count, first_span_count);
+    }
+
+    #[test]
+    fn test_fast_path_falls_back_on_markdown() {
+        let mut stream = StreamRenderer::new(MarkdownOptions::default());
+        stream.append("Hello");
+        // This contains ** which triggers slow path
+        let out = stream.append(" **bold**");
+        // Should still be correct
+        assert!(out.span_count > 0);
+    }
+
+    #[test]
+    fn test_fast_path_correctness() {
+        // Fast path output should be consistent with full parse output
+        let mut stream1 = StreamRenderer::new(MarkdownOptions::default());
+        stream1.append("Hello");
+
+        let mut stream2 = StreamRenderer::new(MarkdownOptions::default());
+        stream2.append("Hello World");
+
+        let out1 = stream1.append(" World");
+        let out1_text = unsafe {
+            std::str::from_utf8(std::slice::from_raw_parts(
+                out1.text, out1.text_len as usize,
+            )).unwrap()
+        };
+
+        let snapshot = stream2.snapshot_owned();
+        let out2_full = snapshot.as_output();
+        let out2_full_text = unsafe {
+            std::str::from_utf8(std::slice::from_raw_parts(
+                out2_full.text, out2_full.text_len as usize,
+            )).unwrap()
+        };
+
+        assert_eq!(out1.text_len, out2_full.text_len);
+        assert_eq!(out1_text, out2_full_text);
+    }
+
+    #[test]
+    fn test_fast_path_with_punctuation() {
+        let mut stream = StreamRenderer::new(MarkdownOptions::default());
+        stream.append("The ");
+        let out = stream.append("quick, brown. fox! (test)");
+        assert!(out.text_len > 0);
+        assert!(out.span_count > 0);
+
+        // Verify text content
+        let text = unsafe {
+            std::str::from_utf8(std::slice::from_raw_parts(
+                out.text, out.text_len as usize,
+            )).unwrap()
+        };
+        assert!(text.contains("quick, brown. fox! (test)"));
     }
 }

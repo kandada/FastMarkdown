@@ -9,6 +9,8 @@ pub const FLAG_INLINE_CODE: u32 = 1 << 3;
 pub const FLAG_LINK: u32 = 1 << 4;
 pub const FLAG_IMAGE: u32 = 1 << 5;
 pub const FLAG_MATH: u32 = 1 << 6;
+pub const FLAG_SUBSCRIPT: u32 = 1 << 7;
+pub const FLAG_SUPERSCRIPT: u32 = 1 << 8;
 
 /// 块类型
 pub const BLOCK_PARAGRAPH: u8 = 0;
@@ -28,6 +30,14 @@ pub const BLOCK_HORIZONTAL_RULE: u8 = 13;
 pub const BLOCK_MATH_BLOCK: u8 = 14;
 pub const BLOCK_IMAGE: u8 = 15;
 
+/// extra_data chunk kind identifiers
+pub const EXTRA_KIND_LINK_URL: u8 = 0;
+pub const EXTRA_KIND_IMAGE_URL: u8 = 1;
+pub const EXTRA_KIND_CODE_LANGUAGE: u8 = 2;
+pub const EXTRA_KIND_TABLE_METADATA: u8 = 3;
+pub const EXTRA_KIND_CODE_HIGHLIGHT: u8 = 4;
+pub const EXTRA_KIND_LIST_META: u8 = 5;
+
 /// 单个样式 span（连续同属性的文本片段）
 /// #[repr(C)] 确保 FFI 兼容，16 字节对齐
 #[repr(C)]
@@ -43,8 +53,10 @@ pub struct Span {
     pub extra_len: u32,
     /// 块类型
     pub block_type: u8,
-    /// 显式 padding 确保 struct 尺寸确定且无未初始化字节
-    pub _padding: [u8; 3],
+    /// 块嵌套深度（列表/引用的层级，0=根层级）
+    pub block_depth: u8,
+    /// 块序号（每个新的 block 级元素 +1，同 block 内 spans 共享同一序号）
+    pub block_seq: u16,
 }
 
 /// Span 输出（包含文本、span 数组和额外数据）
@@ -61,6 +73,10 @@ pub struct SpanOutput {
     /// 额外数据区（链接 URL、图片 URL 等）
     pub extra_data: *const u8,
     pub extra_data_len: u32,
+    /// 可选：与 spans 一一对应的 UTF-16 偏移（指针为 null 表示未启用）
+    /// 用于 iOS(NSString)/Android(SpannableString) 等 UTF-16 平台的零拷贝偏移转换
+    pub utf16_offsets: *const u32,
+    pub utf16_offsets_len: u32,
 }
 
 /// 流式增量 delta
@@ -79,8 +95,16 @@ pub struct SpanDelta {
 }
 
 impl Span {
-    pub fn new(offset: u32, length: u32, flags: u32, block_type: u8, extra_len: u32) -> Self {
-        Self { offset, length, flags, block_type, extra_len, _padding: [0; 3] }
+    pub fn new(
+        offset: u32,
+        length: u32,
+        flags: u32,
+        block_type: u8,
+        extra_len: u32,
+        block_depth: u8,
+        block_seq: u16,
+    ) -> Self {
+        Self { offset, length, flags, block_type, extra_len, block_depth, block_seq }
     }
 
     pub fn is_bold(&self) -> bool {
@@ -113,13 +137,20 @@ impl Span {
 
     pub fn has_any_style(&self) -> bool {
         self.flags & (FLAG_BOLD | FLAG_ITALIC | FLAG_STRIKETHROUGH | FLAG_INLINE_CODE
-            | FLAG_LINK | FLAG_IMAGE | FLAG_MATH) != 0
+            | FLAG_LINK | FLAG_IMAGE | FLAG_MATH | FLAG_SUBSCRIPT | FLAG_SUPERSCRIPT) != 0
+    }
+
+    pub fn is_subscript(&self) -> bool {
+        self.flags & FLAG_SUBSCRIPT != 0
+    }
+
+    pub fn is_superscript(&self) -> bool {
+        self.flags & FLAG_SUPERSCRIPT != 0
     }
 }
 
 impl SpanOutput {
     /// 从拥有的数据创建 SpanOutput（用于测试和内部使用）
-    /// 返回 (SpanOutput, text_buffer, spans_buffer, extra_buffer)
     /// 调用者必须保持这些 buffer 存活
     pub unsafe fn from_buffers(
         text: &[u8],
@@ -133,6 +164,8 @@ impl SpanOutput {
             span_count: spans.len() as u32,
             extra_data: extra.as_ptr(),
             extra_data_len: extra.len() as u32,
+            utf16_offsets: std::ptr::null(),
+            utf16_offsets_len: 0,
         }
     }
 }

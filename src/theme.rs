@@ -93,3 +93,23 @@ impl Default for ThemeConfig {
         }
     }
 }
+
+impl ThemeConfig {
+    /// Create a ThemeConfig with Rust-friendly &str font names.
+    /// The caller must ensure the C strings live as long as the ThemeConfig.
+    /// If font_name is None or empty, uses system default font.
+    pub fn with_fonts(
+        body_font_name: Option<&std::ffi::CStr>,
+        body_font_size: f32,
+        monospace_font_name: Option<&std::ffi::CStr>,
+        monospace_font_size: f32,
+    ) -> Self {
+        Self {
+            body_font_name: body_font_name.map_or(std::ptr::null(), |s| s.as_ptr()),
+            body_font_size,
+            monospace_font_name: monospace_font_name.map_or(std::ptr::null(), |s| s.as_ptr()),
+            monospace_font_size,
+            ..Default::default()
+        }
+    }
+}

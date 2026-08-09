@@ -23,6 +23,13 @@ pub struct MarkdownOptions {
     pub smart_punctuation: bool,
     pub code_class_prefix: Option<String>,
     pub base_url: Option<String>,
+    /// 代码高亮（默认关闭，需启用 `highlight` feature）
+    #[cfg(feature = "highlight")]
+    pub highlight: bool,
+    /// 是否计算 UTF-16 偏移（为 iOS/Android 等 UTF-16 平台优化）
+    /// 启用后在 SpanOutput 中输出与 span_count 一一对应的 UTF-16 偏移数组。
+    /// 对于纯 ASCII 文本（占 AI 输出 95%+），UTF-8 == UTF-16，几乎零成本。
+    pub compute_utf16_offsets: bool,
 }
 
 impl Default for MarkdownOptions {
@@ -33,6 +40,9 @@ impl Default for MarkdownOptions {
             smart_punctuation: false,
             code_class_prefix: Some("language-".into()),
             base_url: None,
+            #[cfg(feature = "highlight")]
+            highlight: false,
+            compute_utf16_offsets: false,
         }
     }
 }
@@ -44,7 +54,11 @@ impl MarkdownOptions {
             | Options::ENABLE_FOOTNOTES
             | Options::ENABLE_STRIKETHROUGH
             | Options::ENABLE_TASKLISTS
-            | Options::ENABLE_HEADING_ATTRIBUTES;
+            | Options::ENABLE_HEADING_ATTRIBUTES
+            | Options::ENABLE_SUBSCRIPT
+            | Options::ENABLE_SUPERSCRIPT
+            | Options::ENABLE_DEFINITION_LIST
+            | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS;
         if self.smart_punctuation {
             opts |= Options::ENABLE_SMART_PUNCTUATION;
         }

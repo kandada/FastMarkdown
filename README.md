@@ -28,8 +28,11 @@ fastmarkdown solves all three:
 - **Full GFM support** — headings, bold, italic, strikethrough, inline code, code blocks, links, images, ordered/unordered lists, blockquotes, tables, horizontal rules, task lists, footnotes
 - **HTML tag passthrough** — `<b>`, `<i>`, `<a>`, `<img>`, `<table>`, `<details>`, etc., with three safety modes (Strip / Safe / AllowAll)
 - **`$` sign pitfalls avoided** — literal mode treats `$HOME`, `$5.99` as text; optional detect mode for LaTeX math
+- **Optional code highlighting** — `highlight` feature flag + `MarkdownOptions::highlight = true`. Outputs 15-type token stream in `extra_data` (kind=4). Host maps types to colors. Zero-cost when disabled
 - **Streaming API** — native token-level append for real-time AI output
 - **Dual output** — HTML string (WebView/export) and structured Span array (native rendering)
+- **Block structure for document viewing** — `block_seq` (unique per block, for LazyVStack splitting), `block_depth` (nesting level for list/quote indent), table metadata (column count + per-column alignment) in a self-describing `extra_data` binary format
+- **Self-describing extra_data** — `[kind: u8, len: u16 LE, data]` chunks for link URLs, image URLs, code languages, table metadata, and code highlighting tokens. Consumers parse without external indexes
 - **C FFI** — static/dynamic library compiled from Rust, consumable from Swift, Kotlin, C, Python
 - **Cross-platform** — iOS (aarch64-apple-ios), Android (aarch64-linux-android), macOS/Linux/Windows
 
@@ -265,6 +268,112 @@ cargo build --release --target aarch64-linux-android
 fastmarkdown powers markdown rendering in:
 
 - [**AACode**](https://github.com/kandada/aacode) — the mobile AI coding agent for iOS
+
+## Use Cases
+
+### Chat / AI Messages
+
+fastmarkdown is optimized for chat rendering: parse markdown → flat span array → platform adapter → one `NSAttributedString`/`SpannableString` → one `UITextView`. This eliminates View explosion and gives fast, predictable performance.
+
+### File Preview / Document Viewing
+
+Span output carries `block_seq`, `block_depth`, and self-describing `extra_data`:
+
+| field | size | purpose |
+|-------|------|---------|
+| `block_seq` | u16 | unique per block; group by seq → N blocks for LazyVStack / lazy loading |
+| `block_depth` | u8 | list/quote nesting level; `depth × indentPerLevel` → UI indent |
+| `block_type` | u8 | paragraph, heading, code_block, table_cell, list_item, etc. |
+| `extra_data` | bytes | `[kind:u8, len:u16 LE, data]` chunks for link URLs, code languages, table metadata (column count + alignment + **per-column max char width**) |
+
+**Table metadata chunk** (kind=3): `[col_count: u8, (align: u8, char_width: u16 LE)*N]` — `char_width` is the maximum character count per column across all rows, useful for host-side column width estimation without measuring text. |
+
+**Consumer guide:**
+
+```rust
+// 1. Reconstruct blocks
+let mut blocks: Vec<Vec<&Span>> = vec![];
+let mut current_seq = spans[0].block_seq;
+let mut current: Vec<&Span> = vec![];
+for s in spans {
+    if s.block_seq != current_seq { blocks.push(current); current = vec![]; current_seq = s.block_seq; }
+    current.push(s);
+}
+
+// 2. Parse extra_data chunks
+let mut pos = 0;
+while pos + 3 <= extra.len() {
+    let kind = extra[pos];
+    let len = u16::from_le_bytes([extra[pos + 1], extra[pos + 2]]) as usize;
+    let data = &extra[pos + 3..pos + 3 + len];
+    match kind {
+        2 => println!("Code language: {}", str::from_utf8(data).unwrap()),
+        3 => println!("Table: {} columns, alignments: {:?}", data[0], &data[1..]),
+        _ => {}
+    }
+    pos += 3 + len;
+}
+
+// 3. Rebuild table rows
+let col_count = table_meta[0] as usize;
+let data_cells: Vec<_> = spans.iter().filter(|s| s.block_type == BLOCK_TABLE_CELL).collect();
+for row in data_cells.chunks(col_count) { /* render row */ }
+```
+
+See `tests/block_structure.rs` and `tests/consumer_verify.rs` for complete working examples.
+
+---
+
+## Code Highlighting (optional)
+
+Enable via `features = ["highlight"]` in Cargo.toml and set `MarkdownOptions::highlight = true`.
+
+**Token types** (15 generic types mapped from syntect scopes):
+
+| id | type | id | type | id | type |
+|----|------|----|------|----|------|
+| 0 | other | 5 | function | 10 | constant |
+| 1 | keyword | 6 | type | 11 | builtin |
+| 2 | string | 7 | operator | 12 | entity |
+| 3 | comment | 8 | punctuation | 13 | markup |
+| 4 | number | 9 | variable | 14 | regex |
+
+**Host consumption** (Swift example):
+```swift
+// Read extra_data chunk kind=4 after kind=2 (language)
+let tokens = parseHighlightChunk(extra)
+var pos = 0
+for (type, len) in tokens {
+    let range = NSRange(location: pos, length: Int(len))
+    attrString.addAttribute(.foregroundColor, value: highlightColors[Int(type)], range: range)
+    pos += Int(len)
+}
+```
+
+**Zero-cost when disabled**: `highlight` is a compile-time feature flag. Without it, no syntect dependency, no binary size increase, no runtime overhead.
+
+Supported languages: all in Sublime Text syntax definitions (100+ languages, including rust, python, swift, kotlin, bash, javascript, c, c++, java, go, etc.).
+
+### Integration Checklist
+
+When integrating code highlighting, ensure all three steps are done:
+
+1. **Enable compile-time feature**
+   ```
+   cargo build --features highlight --release
+   ```
+   Without `--features highlight`, syntect is not compiled and no highlight chunk is produced. Binary size impact: ~1.2MB (iOS `.a`).
+
+2. **Enable runtime option**
+   ```rust
+   let mut opts = MarkdownOptions::default();
+   opts.highlight = true;  // default is false
+   let output = to_spans_with_options(md, &opts);
+   ```
+   Or via FFI: pass `highlight=1` to `fastmarkdown_to_spans_ex`.
+
+3. **Consume the highlight chunk on the host (Swift/Kotlin)**
+   The `extra_data` contains `kind=4` chunks (one per code block, immediately after the `kind=2` language chunk). Parse the chunk format and apply colors to your attributed text. See the Swift example above.
 
 ---
 

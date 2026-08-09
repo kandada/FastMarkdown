@@ -14,9 +14,9 @@ use crate::stream::StreamRenderer;
 // ============================================================
 
 fn to_c_string(s: &str) -> *mut c_char {
-    CString::new(s)
-        .map(CString::into_raw)
-        .unwrap_or(std::ptr::null_mut())
+    // Replace interior NUL bytes to avoid CString::new failure
+    let safe: String = s.chars().map(|c| if c == '\0' { ' ' } else { c }).collect();
+    CString::new(safe).map(CString::into_raw).unwrap_or(std::ptr::null_mut())
 }
 
 unsafe fn free_c_string(ptr: *mut c_char) {
@@ -58,16 +58,15 @@ fn math_mode_from_u32(mode: u32) -> MathMode {
 // ============================================================
 
 /// Extract thin pointers from OwnedSpanOutput, transferring ownership.
-/// The returned (text, text_len, spans, span_count, extra, extra_len) must be
-/// freed via `free_span_raw_parts`.
+/// The returned parts must be freed via `free_span_raw_parts`.
 fn owned_to_raw_parts(
     owned: crate::spans_renderer::OwnedSpanOutput,
-) -> (*const u8, u32, *const Span, u32, *const u8, u32) {
+) -> (*const u8, u32, *const Span, u32, *const u8, u32, *const u32, u32) {
     let text_len = owned.text.len() as u32;
     let span_count = owned.spans.len() as u32;
     let extra_len = owned.extra_data.len() as u32;
+    let utf16_len = owned.utf16_offsets.len() as u32;
 
-    // Convert Box<[T]> to fat raw pointer, then extract data pointer
     let text_fat: *mut [u8] = Box::into_raw(owned.text);
     let text_ptr = text_fat as *const u8;
 
@@ -77,7 +76,10 @@ fn owned_to_raw_parts(
     let extra_fat: *mut [u8] = Box::into_raw(owned.extra_data);
     let extra_ptr = extra_fat as *const u8;
 
-    (text_ptr, text_len, spans_ptr, span_count, extra_ptr, extra_len)
+    let utf16_fat: *mut [u32] = Box::into_raw(owned.utf16_offsets);
+    let utf16_ptr = utf16_fat as *const u32;
+
+    (text_ptr, text_len, spans_ptr, span_count, extra_ptr, extra_len, utf16_ptr, utf16_len)
 }
 
 /// Free raw span parts allocated by `owned_to_raw_parts`.
@@ -88,6 +90,8 @@ unsafe fn free_span_raw_parts(
     span_count: u32,
     extra_ptr: *mut u8,
     extra_len: u32,
+    utf16_ptr: *mut u32,
+    utf16_len: u32,
 ) {
     if !text_ptr.is_null() && text_len > 0 {
         let fat = std::ptr::slice_from_raw_parts_mut(text_ptr, text_len as usize);
@@ -99,6 +103,10 @@ unsafe fn free_span_raw_parts(
     }
     if !extra_ptr.is_null() && extra_len > 0 {
         let fat = std::ptr::slice_from_raw_parts_mut(extra_ptr, extra_len as usize);
+        drop(Box::from_raw(fat));
+    }
+    if !utf16_ptr.is_null() && utf16_len > 0 {
+        let fat = std::ptr::slice_from_raw_parts_mut(utf16_ptr, utf16_len as usize);
         drop(Box::from_raw(fat));
     }
 }
@@ -116,7 +124,8 @@ pub struct FastMarkdownSpan {
     pub flags: u32,
     pub extra_len: u32,
     pub block_type: u8,
-    pub _padding: [u8; 3],
+    pub block_depth: u8,
+    pub block_seq: u16,
 }
 
 /// C-compatible SpanOutput (ownership of pointers transfers to caller)
@@ -130,12 +139,23 @@ pub struct FastMarkdownSpanOutput {
     pub span_count: u32,
     pub extra_data: *const u8,
     pub extra_data_len: u32,
+    /// 可选：UTF-16 偏移数组（与 spans 一一对应），null 表示未启用
+    pub utf16_offsets: *const u32,
+    pub utf16_offsets_len: u32,
 }
 
 // Compile-time layout check
 const _LAYOUT_CHECK: () = {
-    assert!(std::mem::size_of::<Span>() == std::mem::size_of::<FastMarkdownSpan>());
-    assert!(std::mem::align_of::<Span>() == std::mem::align_of::<FastMarkdownSpan>());
+    use std::mem::{align_of, offset_of, size_of};
+    assert!(size_of::<Span>() == size_of::<FastMarkdownSpan>());
+    assert!(align_of::<Span>() == align_of::<FastMarkdownSpan>());
+    assert!(offset_of!(Span, offset) == offset_of!(FastMarkdownSpan, offset));
+    assert!(offset_of!(Span, length) == offset_of!(FastMarkdownSpan, length));
+    assert!(offset_of!(Span, flags) == offset_of!(FastMarkdownSpan, flags));
+    assert!(offset_of!(Span, extra_len) == offset_of!(FastMarkdownSpan, extra_len));
+    assert!(offset_of!(Span, block_type) == offset_of!(FastMarkdownSpan, block_type));
+    assert!(offset_of!(Span, block_depth) == offset_of!(FastMarkdownSpan, block_depth));
+    assert!(offset_of!(Span, block_seq) == offset_of!(FastMarkdownSpan, block_seq));
 };
 
 fn empty_output() -> FastMarkdownSpanOutput {
@@ -146,6 +166,8 @@ fn empty_output() -> FastMarkdownSpanOutput {
         span_count: 0,
         extra_data: std::ptr::null(),
         extra_data_len: 0,
+        utf16_offsets: std::ptr::null(),
+        utf16_offsets_len: 0,
     }
 }
 
@@ -193,7 +215,7 @@ pub extern "C" fn fastmarkdown_to_spans(markdown: *const c_char) -> FastMarkdown
     let md = ptr_to_str(markdown);
     let options = MarkdownOptions::default();
     let owned = crate::spans_renderer::markdown_to_spans_owned(md, &options);
-    let (text, text_len, spans, span_count, extra, extra_len) = owned_to_raw_parts(owned);
+    let (text, text_len, spans, span_count, extra, extra_len, utf16, utf16_len) = owned_to_raw_parts(owned);
     FastMarkdownSpanOutput {
         text,
         text_len,
@@ -201,6 +223,8 @@ pub extern "C" fn fastmarkdown_to_spans(markdown: *const c_char) -> FastMarkdown
         span_count,
         extra_data: extra,
         extra_data_len: extra_len,
+        utf16_offsets: utf16,
+        utf16_offsets_len: utf16_len,
     }
 }
 
@@ -210,16 +234,25 @@ pub extern "C" fn fastmarkdown_to_spans_ex(
     html_mode: u32,
     math_mode: u32,
     smart_punct: bool,
+    highlight: bool,
+    compute_utf16: bool,
 ) -> FastMarkdownSpanOutput {
     let md = ptr_to_str(markdown);
-    let options = MarkdownOptions {
+    #[allow(unused_mut)]
+    let mut options = MarkdownOptions {
         html_mode: html_mode_from_u32(html_mode),
         math_mode: math_mode_from_u32(math_mode),
         smart_punctuation: smart_punct,
+        compute_utf16_offsets: compute_utf16,
         ..Default::default()
     };
+    #[cfg(feature = "highlight")]
+    { options.highlight = highlight; }
+    #[cfg(not(feature = "highlight"))]
+    let _ = highlight;
+
     let owned = crate::spans_renderer::markdown_to_spans_owned(md, &options);
-    let (text, text_len, spans, span_count, extra, extra_len) = owned_to_raw_parts(owned);
+    let (text, text_len, spans, span_count, extra, extra_len, utf16, utf16_len) = owned_to_raw_parts(owned);
     FastMarkdownSpanOutput {
         text,
         text_len,
@@ -227,6 +260,8 @@ pub extern "C" fn fastmarkdown_to_spans_ex(
         span_count,
         extra_data: extra,
         extra_data_len: extra_len,
+        utf16_offsets: utf16,
+        utf16_offsets_len: utf16_len,
     }
 }
 
@@ -252,15 +287,15 @@ pub extern "C" fn fastmarkdown_free_spans(output: *mut FastMarkdownSpanOutput) {
             o.span_count,
             o.extra_data as *mut u8,
             o.extra_data_len,
+            o.utf16_offsets as *mut u32,
+            o.utf16_offsets_len,
         );
     }
 }
 
 #[no_mangle]
-pub extern "C" fn fastmarkdown_version() -> *const c_char {
-    // Return a pointer to a static string (no need to free)
-    static VERSION: &str = concat!("fastmarkdown ", env!("CARGO_PKG_VERSION"), "\0");
-    VERSION.as_ptr() as *const c_char
+pub extern "C" fn fastmarkdown_version() -> *mut c_char {
+    to_c_string(concat!("fastmarkdown ", env!("CARGO_PKG_VERSION")))
 }
 
 // --- Streaming ---
@@ -270,13 +305,45 @@ pub extern "C" fn fastmarkdown_stream_create(
     html_mode: u32,
     math_mode: u32,
     smart_punct: bool,
+    highlight: bool,
 ) -> *mut std::ffi::c_void {
-    let options = MarkdownOptions {
+    #[allow(unused_mut)]
+    let mut options = MarkdownOptions {
         html_mode: html_mode_from_u32(html_mode),
         math_mode: math_mode_from_u32(math_mode),
         smart_punctuation: smart_punct,
         ..Default::default()
     };
+    #[cfg(feature = "highlight")]
+    { options.highlight = highlight; }
+    #[cfg(not(feature = "highlight"))]
+    let _ = highlight;
+
+    let stream = Box::new(StreamRenderer::new(options));
+    Box::into_raw(stream) as *mut std::ffi::c_void
+}
+
+#[no_mangle]
+pub extern "C" fn fastmarkdown_stream_create_ex(
+    html_mode: u32,
+    math_mode: u32,
+    smart_punct: bool,
+    highlight: bool,
+    compute_utf16: bool,
+) -> *mut std::ffi::c_void {
+    #[allow(unused_mut)]
+    let mut options = MarkdownOptions {
+        html_mode: html_mode_from_u32(html_mode),
+        math_mode: math_mode_from_u32(math_mode),
+        smart_punctuation: smart_punct,
+        compute_utf16_offsets: compute_utf16,
+        ..Default::default()
+    };
+    #[cfg(feature = "highlight")]
+    { options.highlight = highlight; }
+    #[cfg(not(feature = "highlight"))]
+    let _ = highlight;
+
     let stream = Box::new(StreamRenderer::new(options));
     Box::into_raw(stream) as *mut std::ffi::c_void
 }
@@ -305,6 +372,8 @@ pub extern "C" fn fastmarkdown_stream_append(
         span_count: output.span_count,
         extra_data: output.extra_data,
         extra_data_len: output.extra_data_len,
+        utf16_offsets: output.utf16_offsets,
+        utf16_offsets_len: output.utf16_offsets_len,
     }
 }
 
@@ -325,6 +394,8 @@ pub extern "C" fn fastmarkdown_stream_finish(
             span_count: output.span_count,
             extra_data: output.extra_data,
             extra_data_len: output.extra_data_len,
+            utf16_offsets: output.utf16_offsets,
+            utf16_offsets_len: output.utf16_offsets_len,
         },
         None => empty_output(),
     }
@@ -347,6 +418,27 @@ pub extern "C" fn fastmarkdown_stream_reset(stream_ptr: *mut std::ffi::c_void) {
         stream.reset();
     }
 }
+
+// ============================================================
+//  Code highlight token type constants (for host adapter mapping)
+// ============================================================
+
+pub const FM_TOKEN_OTHER: u8 = 0;
+pub const FM_TOKEN_KEYWORD: u8 = 1;
+pub const FM_TOKEN_STRING: u8 = 2;
+pub const FM_TOKEN_COMMENT: u8 = 3;
+pub const FM_TOKEN_NUMBER: u8 = 4;
+pub const FM_TOKEN_FUNCTION: u8 = 5;
+pub const FM_TOKEN_TYPE: u8 = 6;
+pub const FM_TOKEN_OPERATOR: u8 = 7;
+pub const FM_TOKEN_PUNCTUATION: u8 = 8;
+pub const FM_TOKEN_VARIABLE: u8 = 9;
+pub const FM_TOKEN_CONSTANT: u8 = 10;
+pub const FM_TOKEN_BUILTIN: u8 = 11;
+pub const FM_TOKEN_ENTITY: u8 = 12;
+pub const FM_TOKEN_MARKUP: u8 = 13;
+pub const FM_TOKEN_REGEX: u8 = 14;
+pub const FM_TOKEN_TYPE_COUNT: u8 = 15;
 
 // ============================================================
 //  ThemeConfig FFI
@@ -391,6 +483,77 @@ pub extern "C" fn fastmarkdown_theme_default() -> FastMarkdownTheme {
         line_spacing: t.line_spacing,
         list_indent: t.list_indent,
         blockquote_indent: t.blockquote_indent,
+    }
+}
+
+// ============================================================
+//  Standalone Code Highlight FFI (syntect, independent of markdown parsing)
+// ============================================================
+
+/// C-compatible output for standalone code highlighting.
+/// Binary format (on success):
+///   bytes[0..2]:   u16 LE = token count N
+///   bytes[2..]:    N entries of (token_type: u8, len: u16 LE)
+/// data_len = 2 + N * 3
+/// On failure (unknown language / feature disabled): data is null, data_len is 0.
+#[repr(C)]
+#[derive(Debug)]
+pub struct FastMarkdownHighlightOutput {
+    pub data: *mut u8,
+    pub data_len: u32,
+}
+
+/// Highlight a code string with the given language, returning flat token list.
+/// The returned `FastMarkdownHighlightOutput.data` must be freed via `fastmarkdown_free_highlight`.
+/// Tokens cover the entire input code; concatenated lengths equal the code byte length.
+/// Returns null data if the language is not recognized or highlighting is unavailable.
+#[no_mangle]
+pub extern "C" fn fastmarkdown_highlight(
+    code: *const c_char,
+    language: *const c_char,
+) -> FastMarkdownHighlightOutput {
+    let code_str = ptr_to_str(code);
+    let lang_str = ptr_to_str(language);
+
+    #[cfg(feature = "highlight")]
+    {
+        match crate::highlight::highlight_code(code_str, lang_str) {
+            Some(tokens) => {
+                let count = tokens.len() as u16;
+                let mut data: Vec<u8> = Vec::with_capacity(2 + count as usize * 3);
+                data.extend_from_slice(&count.to_le_bytes());
+                for t in &tokens {
+                    data.push(t.token_type);
+                    data.extend_from_slice(&t.len.to_le_bytes());
+                }
+                let boxed: Box<[u8]> = data.into_boxed_slice();
+                let ptr = Box::into_raw(boxed) as *mut u8;
+                let len = 2u32 + (count as u32) * 3;
+                FastMarkdownHighlightOutput { data: ptr, data_len: len }
+            }
+            None => FastMarkdownHighlightOutput { data: std::ptr::null_mut(), data_len: 0 },
+        }
+    }
+    #[cfg(not(feature = "highlight"))]
+    {
+        let _ = (code_str, lang_str);
+        FastMarkdownHighlightOutput { data: std::ptr::null_mut(), data_len: 0 }
+    }
+}
+
+/// Free a `FastMarkdownHighlightOutput` allocated by `fastmarkdown_highlight`.
+/// Safe to call with null or zero-length data.
+#[no_mangle]
+pub extern "C" fn fastmarkdown_free_highlight(output: *mut FastMarkdownHighlightOutput) {
+    if output.is_null() {
+        return;
+    }
+    let o = unsafe { &*output };
+    if !o.data.is_null() && o.data_len > 0 {
+        unsafe {
+            let fat = std::ptr::slice_from_raw_parts_mut(o.data, o.data_len as usize);
+            drop(Box::from_raw(fat));
+        }
     }
 }
 
