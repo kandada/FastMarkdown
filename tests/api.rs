@@ -34,7 +34,9 @@ fn test_html_and_spans_consistency() {
     assert!(spans.iter().any(|s| s.is_bold()));
     assert!(spans.iter().any(|s| s.is_italic()));
 
-    unsafe { fastmarkdown::free_spans(output); }
+    unsafe {
+        fastmarkdown::free_spans(output);
+    }
 }
 
 #[test]
@@ -52,8 +54,11 @@ fn test_span_output_covers_full_text() {
         let output = to_spans(md);
         let spans = unsafe { std::slice::from_raw_parts(output.spans, output.span_count as usize) };
         let text = unsafe {
-            std::str::from_utf8(std::slice::from_raw_parts(output.text, output.text_len as usize))
-                .unwrap()
+            std::str::from_utf8(std::slice::from_raw_parts(
+                output.text,
+                output.text_len as usize,
+            ))
+            .unwrap()
         };
 
         if output.span_count > 0 {
@@ -61,11 +66,14 @@ fn test_span_output_covers_full_text() {
             let last = spans.last().unwrap();
             assert!(
                 (last.offset + last.length) as usize <= text.len(),
-                "Span overflows text for input: {:?}", md
+                "Span overflows text for input: {:?}",
+                md
             );
         }
 
-        unsafe { fastmarkdown::free_spans(output); }
+        unsafe {
+            fastmarkdown::free_spans(output);
+        }
     }
 }
 
@@ -87,7 +95,9 @@ fn test_options_independent() {
 
             // Spans
             let output = to_spans_with_options(md, &opts);
-            unsafe { fastmarkdown::free_spans(output); }
+            unsafe {
+                fastmarkdown::free_spans(output);
+            }
         }
     }
 }
@@ -137,19 +147,25 @@ fn test_to_spans_includes_link_urls() {
     // Verify extra data exists
     let _extra_start = output.extra_data as usize;
     assert!(output.extra_data_len > 0);
-    unsafe { fastmarkdown::free_spans(output); }
+    unsafe {
+        fastmarkdown::free_spans(output);
+    }
 }
 
 #[test]
 fn test_free_spans_safety() {
     // free_spans should not crash when called on valid output
     let output = to_spans("Hello");
-    unsafe { fastmarkdown::free_spans(output); }
+    unsafe {
+        fastmarkdown::free_spans(output);
+    }
     // No crash = pass
 
     // free_spans on empty
     let output = to_spans("");
-    unsafe { fastmarkdown::free_spans(output); }
+    unsafe {
+        fastmarkdown::free_spans(output);
+    }
     // No crash = pass
 }
 
@@ -158,9 +174,5 @@ fn crate_version() -> String {
     if ptr.is_null() {
         return String::new();
     }
-    unsafe {
-        std::ffi::CStr::from_ptr(ptr)
-            .to_string_lossy()
-            .into_owned()
-    }
+    unsafe { std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned() }
 }

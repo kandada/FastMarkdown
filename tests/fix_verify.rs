@@ -9,8 +9,11 @@ fn get_spans(output: &SpanOutput) -> &[Span] {
 
 fn get_text(output: &SpanOutput) -> &str {
     unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(output.text, output.text_len as usize))
-            .unwrap()
+        std::str::from_utf8(std::slice::from_raw_parts(
+            output.text,
+            output.text_len as usize,
+        ))
+        .unwrap()
     }
 }
 
@@ -36,7 +39,9 @@ fn parse_chunks(extra: &[u8]) -> Vec<(u8, Vec<u8>)> {
 }
 
 fn free(output: SpanOutput) {
-    unsafe { fastmarkdown::free_spans(output); }
+    unsafe {
+        fastmarkdown::free_spans(output);
+    }
 }
 
 // ================================================================
@@ -53,8 +58,10 @@ fn test_code_block_lt_gt_preserved_in_strip_mode() {
     let spans = get_spans(&output);
 
     // Code block should exist
-    assert!(spans.iter().any(|s| s.block_type == BLOCK_CODE),
-        "Should have code block span");
+    assert!(
+        spans.iter().any(|s| s.block_type == BLOCK_CODE),
+        "Should have code block span"
+    );
     // < and > should be preserved
     assert!(text.contains('<'), "Should contain '<', got: {:?}", text);
     assert!(text.contains("if a"), "Should contain code text");
@@ -139,7 +146,8 @@ fn test_ordered_list_default_start_has_chunk() {
     let extra = get_extra(&output);
     let chunks = parse_chunks(extra);
 
-    let list_meta = chunks.iter()
+    let list_meta = chunks
+        .iter()
         .find(|(k, _)| *k == EXTRA_KIND_LIST_META)
         .expect("Ordered list should always have LIST_META chunk");
     let start = u16::from_le_bytes([list_meta.1[0], list_meta.1[1]]);
@@ -155,7 +163,8 @@ fn test_ordered_list_custom_start() {
     let extra = get_extra(&output);
     let chunks = parse_chunks(extra);
 
-    let list_meta = chunks.iter()
+    let list_meta = chunks
+        .iter()
         .find(|(k, _)| *k == EXTRA_KIND_LIST_META)
         .expect("Ordered list with start=3 should produce LIST_META chunk");
 
@@ -173,7 +182,10 @@ fn test_unordered_list_no_start_extra() {
     let chunks = parse_chunks(extra);
 
     let has_list_meta = chunks.iter().any(|(k, _)| *k == EXTRA_KIND_LIST_META);
-    assert!(!has_list_meta, "Unordered list should not produce LIST_META");
+    assert!(
+        !has_list_meta,
+        "Unordered list should not produce LIST_META"
+    );
 
     free(output);
 }
@@ -185,7 +197,8 @@ fn test_ordered_list_start_one_has_chunk() {
     let extra = get_extra(&output);
     let chunks = parse_chunks(extra);
 
-    let list_meta = chunks.iter()
+    let list_meta = chunks
+        .iter()
         .find(|(k, _)| *k == EXTRA_KIND_LIST_META)
         .expect("Ordered list should produce LIST_META chunk");
     let start = u16::from_le_bytes([list_meta.1[0], list_meta.1[1]]);
@@ -202,7 +215,8 @@ fn test_multiple_ordered_lists_different_starts() {
     let extra = get_extra(&output);
     let chunks = parse_chunks(extra);
 
-    let list_meta = chunks.iter()
+    let list_meta = chunks
+        .iter()
         .find(|(k, _)| *k == EXTRA_KIND_LIST_META)
         .expect("Should have LIST_META for start=3");
     let start = u16::from_le_bytes([list_meta.1[0], list_meta.1[1]]);
@@ -219,7 +233,10 @@ fn test_ordered_list_in_blockquote_start_extra() {
     let chunks = parse_chunks(extra);
 
     let has_list_meta = chunks.iter().any(|(k, _)| *k == EXTRA_KIND_LIST_META);
-    assert!(has_list_meta, "Ordered list inside blockquote should produce LIST_META");
+    assert!(
+        has_list_meta,
+        "Ordered list inside blockquote should produce LIST_META"
+    );
 
     free(output);
 }
@@ -229,8 +246,12 @@ fn test_ordered_list_span_types_correct() {
     let output = to_spans("5. five\n6. six");
     let spans = get_spans(&output);
 
-    assert!(spans.iter().any(|s| s.block_type == BLOCK_LIST_ITEM_ORDERED),
-        "Should have ORDERED list items");
+    assert!(
+        spans
+            .iter()
+            .any(|s| s.block_type == BLOCK_LIST_ITEM_ORDERED),
+        "Should have ORDERED list items"
+    );
 
     free(output);
 }
@@ -274,7 +295,10 @@ fn test_math_preprocessing_mixed_with_literal_dollars() {
     let spans_arr = get_spans(&spans);
     let text = get_text(&spans);
     assert!(text.contains("$5.99"), "Literal dollar should stay in text");
-    assert!(spans_arr.iter().any(|s| s.is_math()), "Should have math span");
+    assert!(
+        spans_arr.iter().any(|s| s.is_math()),
+        "Should have math span"
+    );
     free(spans);
 }
 
@@ -355,7 +379,10 @@ fn test_metadata_block_html() {
     let html = to_html(md);
     assert!(html.contains("Title"));
     assert!(html.contains("Body"));
-    assert!(!html.contains("---"), "Metadata delimiters should not appear in HTML");
+    assert!(
+        !html.contains("---"),
+        "Metadata delimiters should not appear in HTML"
+    );
 }
 
 // ================================================================
@@ -391,8 +418,9 @@ fn test_relative_url_without_leading_slash_gets_base() {
 
     let html = to_html_with_options("[post](some-page.html)", &opts);
     // Relative URL without / gets base prepended
-    assert!(html.contains("https://example.com/blog/some-page.html")
-        || html.contains("some-page.html"));
+    assert!(
+        html.contains("https://example.com/blog/some-page.html") || html.contains("some-page.html")
+    );
 }
 
 #[test]
@@ -468,7 +496,9 @@ fn test_to_spans_owned_consistency_with_raw_api() {
         assert_eq!(owned_span.block_type, raw_span.block_type);
     }
 
-    unsafe { free_spans(raw); }
+    unsafe {
+        free_spans(raw);
+    }
 }
 
 #[test]
@@ -528,21 +558,30 @@ fn test_complex_html_tag_stripping() {
 fn test_crlf_inline_math_not_detected() {
     // Inline math with \r\n should NOT be detected
     let regions = fastmarkdown::math::detect_math_regions("$x\r\ny$");
-    assert!(regions.is_empty(), "Math with CRLF should not be detected as inline math");
+    assert!(
+        regions.is_empty(),
+        "Math with CRLF should not be detected as inline math"
+    );
 }
 
 #[test]
 fn test_crlf_display_math_still_works() {
     let regions = fastmarkdown::math::detect_math_regions("$$\r\nx^2\r\n$$");
     // Display math spans lines, so CRLF should be fine inside
-    assert!(regions.len() > 0, "Display math with CRLF should be detected");
+    assert!(
+        regions.len() > 0,
+        "Display math with CRLF should be detected"
+    );
 }
 
 #[test]
 fn test_cr_inline_math_not_detected() {
     // Mac-style \r line endings
     let regions = fastmarkdown::math::detect_math_regions("$x\ry$");
-    assert!(regions.is_empty(), "Math with CR should not be detected as inline math");
+    assert!(
+        regions.is_empty(),
+        "Math with CR should not be detected as inline math"
+    );
 }
 
 #[test]
@@ -575,10 +614,7 @@ fn test_theme_config_with_fonts() {
     let font_name = CStr::from_bytes_with_nul(b"Helvetica\0").unwrap();
     let mono_name = CStr::from_bytes_with_nul(b"Menlo\0").unwrap();
 
-    let theme = ThemeConfig::with_fonts(
-        Some(font_name), 16.0,
-        Some(mono_name), 14.0,
-    );
+    let theme = ThemeConfig::with_fonts(Some(font_name), 16.0, Some(mono_name), 14.0);
     assert_eq!(theme.body_font_size, 16.0);
     assert_eq!(theme.monospace_font_size, 14.0);
     assert!(!theme.body_font_name.is_null());
@@ -602,15 +638,20 @@ fn test_stream_long_message_fast_path() {
 
     stream.append("Hello");
 
-    let words = [" this", " is", " a", " long", " message", " with", " many", " small", " chunks"];
+    let words = [
+        " this", " is", " a", " long", " message", " with", " many", " small", " chunks",
+    ];
     for word in &words {
         stream.append(word);
     }
 
     let output = stream.append(".");
     let text = unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(output.text, output.text_len as usize))
-            .unwrap()
+        std::str::from_utf8(std::slice::from_raw_parts(
+            output.text,
+            output.text_len as usize,
+        ))
+        .unwrap()
     };
     assert!(text.contains("Hello this is a long message with many small chunks."));
 }
@@ -633,19 +674,27 @@ fn test_stream_fast_path_consistent_with_full_parse() {
     let out2 = to_spans("The quick brown fox jumps over the lazy dog");
 
     let text1 = unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(out1.text, out1.text_len as usize))
-            .unwrap()
+        std::str::from_utf8(std::slice::from_raw_parts(
+            out1.text,
+            out1.text_len as usize,
+        ))
+        .unwrap()
     };
     let text2 = unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(out2.text, out2.text_len as usize))
-            .unwrap()
+        std::str::from_utf8(std::slice::from_raw_parts(
+            out2.text,
+            out2.text_len as usize,
+        ))
+        .unwrap()
     };
 
     assert_eq!(text1, text2);
     assert_eq!(out1.span_count, out2.span_count);
     assert_eq!(out1.text_len, out2.text_len);
 
-    unsafe { free_spans(out2); }
+    unsafe {
+        free_spans(out2);
+    }
 }
 
 // ================================================================
@@ -677,7 +726,11 @@ fn test_yaml_metadata_block_with_content_after() {
     let text = get_text(&output);
     assert!(text.contains("Real Content"));
     // Metadata content should NOT appear in span text
-    assert!(!text.contains("title: My Document"), "Metadata should not leak into span text: '{}'", text);
+    assert!(
+        !text.contains("title: My Document"),
+        "Metadata should not leak into span text: '{}'",
+        text
+    );
 
     free(output);
 }
@@ -750,9 +803,11 @@ fn test_utf16_offsets_ascii_equals_utf8() {
 
     // For pure ASCII, UTF-8 offsets == UTF-16 offsets
     for (i, span) in spans.iter().enumerate() {
-        assert_eq!(offsets[i], span.offset,
+        assert_eq!(
+            offsets[i], span.offset,
             "ASCII: UTF-16 offset {} != UTF-8 offset {} for span {}",
-            offsets[i], span.offset, i);
+            offsets[i], span.offset, i
+        );
     }
 
     free(output);
@@ -902,8 +957,7 @@ fn test_delta_fast_path_continues_after_both_methods() {
 
     let out = stream.append(" end.");
     let text = unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(out.text, out.text_len as usize))
-            .unwrap()
+        std::str::from_utf8(std::slice::from_raw_parts(out.text, out.text_len as usize)).unwrap()
     };
     assert!(text.contains("Start continue end."));
 }
@@ -916,8 +970,10 @@ fn test_delta_fast_path_continues_after_both_methods() {
 fn test_span_output_size_includes_utf16_fields() {
     // SpanOutput grew by 2 * 8 bytes (pointer + u32 padded to 8 each on 64-bit)
     // The exact size depends on alignment; just verify it's larger than before
-    assert!(std::mem::size_of::<SpanOutput>() > 40,
-        "SpanOutput should now include utf16_offsets fields");
+    assert!(
+        std::mem::size_of::<SpanOutput>() > 40,
+        "SpanOutput should now include utf16_offsets fields"
+    );
 }
 
 #[test]

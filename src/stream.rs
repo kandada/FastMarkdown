@@ -69,9 +69,7 @@ impl StreamRenderer {
         let output = crate::spans_renderer::markdown_to_spans_owned(&self.buffer, &self.options);
         let result = output.as_output();
 
-        let spans = unsafe {
-            std::slice::from_raw_parts(result.spans, result.span_count as usize)
-        };
+        let spans = unsafe { std::slice::from_raw_parts(result.spans, result.span_count as usize) };
         self.previous_span_snapshots = snapshots(spans);
 
         self.current_output = Some(output);
@@ -118,9 +116,8 @@ impl StreamRenderer {
         self.current_output = None;
         let output = crate::spans_renderer::markdown_to_spans_owned(&self.buffer, &self.options);
 
-        let current_spans = unsafe {
-            std::slice::from_raw_parts(output.spans.as_ptr(), output.spans.len())
-        };
+        let current_spans =
+            unsafe { std::slice::from_raw_parts(output.spans.as_ptr(), output.spans.len()) };
 
         let delta = compute_delta(&self.previous_span_snapshots, current_spans);
 
@@ -164,9 +161,8 @@ impl StreamRenderer {
 fn is_plain_continuation(chunk: &str) -> bool {
     for b in chunk.bytes() {
         match b {
-            b'\n' | b'\r' | b'#' | b'*' | b'_' | b'`' | b'[' | b']'
-            | b'<' | b'>' | b'|' | b'!' | b'~' | b'$' | b'-' | b'+' | b'='
-            | b'\\' | b'^' => return false,
+            b'\n' | b'\r' | b'#' | b'*' | b'_' | b'`' | b'[' | b']' | b'<' | b'>' | b'|' | b'!'
+            | b'~' | b'$' | b'-' | b'+' | b'=' | b'\\' | b'^' => return false,
             _ => {}
         }
     }
@@ -407,16 +403,20 @@ mod tests {
         let out1 = stream1.append(" World");
         let out1_text = unsafe {
             std::str::from_utf8(std::slice::from_raw_parts(
-                out1.text, out1.text_len as usize,
-            )).unwrap()
+                out1.text,
+                out1.text_len as usize,
+            ))
+            .unwrap()
         };
 
         let snapshot = stream2.snapshot_owned();
         let out2_full = snapshot.as_output();
         let out2_full_text = unsafe {
             std::str::from_utf8(std::slice::from_raw_parts(
-                out2_full.text, out2_full.text_len as usize,
-            )).unwrap()
+                out2_full.text,
+                out2_full.text_len as usize,
+            ))
+            .unwrap()
         };
 
         assert_eq!(out1.text_len, out2_full.text_len);
@@ -433,9 +433,8 @@ mod tests {
 
         // Verify text content
         let text = unsafe {
-            std::str::from_utf8(std::slice::from_raw_parts(
-                out.text, out.text_len as usize,
-            )).unwrap()
+            std::str::from_utf8(std::slice::from_raw_parts(out.text, out.text_len as usize))
+                .unwrap()
         };
         assert!(text.contains("quick, brown. fox! (test)"));
     }

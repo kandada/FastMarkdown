@@ -82,7 +82,11 @@ fn test_math_detect_multiple_inline() {
 
     let html = to_html_with_options("First $a+b$ then $c-d$", &opts);
     let math_count = html.matches("math").count();
-    assert!(math_count >= 2, "Expected at least 2 math regions, got {}", math_count);
+    assert!(
+        math_count >= 2,
+        "Expected at least 2 math regions, got {}",
+        math_count
+    );
 }
 
 #[test]
@@ -105,7 +109,9 @@ fn test_math_in_span_output_detect() {
     let output = to_spans_with_options("The formula $x^2$ is known", &opts);
     let spans = unsafe { std::slice::from_raw_parts(output.spans, output.span_count as usize) };
     assert!(spans.iter().any(|s| s.is_math()));
-    unsafe { fastmarkdown::free_spans(output); }
+    unsafe {
+        fastmarkdown::free_spans(output);
+    }
 }
 
 #[test]
@@ -114,7 +120,9 @@ fn test_math_in_span_output_literal() {
     let spans = unsafe { std::slice::from_raw_parts(output.spans, output.span_count as usize) };
     // No span should have math flag in literal mode
     assert!(spans.iter().all(|s| !s.is_math()));
-    unsafe { fastmarkdown::free_spans(output); }
+    unsafe {
+        fastmarkdown::free_spans(output);
+    }
 }
 
 #[test]

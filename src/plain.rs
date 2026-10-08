@@ -84,7 +84,8 @@ mod tests {
 
     #[test]
     fn test_link() {
-        let result = markdown_to_plain_text("[click here](https://example.com)", &Default::default());
+        let result =
+            markdown_to_plain_text("[click here](https://example.com)", &Default::default());
         assert_eq!(result, "click here");
     }
 

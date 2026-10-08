@@ -4,9 +4,9 @@
 #[cfg(feature = "highlight")]
 use fastmarkdown::ffi::*;
 #[cfg(feature = "highlight")]
-use fastmarkdown::*;
-#[cfg(feature = "highlight")]
 use fastmarkdown::highlight::highlight_code;
+#[cfg(feature = "highlight")]
+use fastmarkdown::*;
 
 // ============================================================
 //  Helper: safe highlight via Rust API (used for cross-validation)
@@ -30,12 +30,19 @@ fn call_highlight(code: &str, lang: &str) -> (Vec<u8>, u32) {
     let c_lang = CString::new(lang).unwrap();
     let output = fastmarkdown_highlight(c_code.as_ptr(), c_lang.as_ptr());
 
-    assert!(!output.data.is_null(), "FFI highlight should succeed for lang={}, code={:?}", lang, code);
-    assert!(output.data_len >= 2, "data_len should be at least 2 bytes (count field)");
+    assert!(
+        !output.data.is_null(),
+        "FFI highlight should succeed for lang={}, code={:?}",
+        lang,
+        code
+    );
+    assert!(
+        output.data_len >= 2,
+        "data_len should be at least 2 bytes (count field)"
+    );
 
-    let data = unsafe {
-        std::slice::from_raw_parts(output.data, output.data_len as usize).to_vec()
-    };
+    let data =
+        unsafe { std::slice::from_raw_parts(output.data, output.data_len as usize).to_vec() };
     let data_len = output.data_len;
 
     // Free via FFI
@@ -151,8 +158,13 @@ mod ffi_tests {
             let (data, _) = call_highlight(code, lang);
             let tokens = decode_tokens(&data);
             let total: usize = tokens.iter().map(|(_, l)| *l as usize).sum();
-            assert_eq!(total, code.len(),
-                "Length mismatch for lang={}, code={:?}", lang, code);
+            assert_eq!(
+                total,
+                code.len(),
+                "Length mismatch for lang={}, code={:?}",
+                lang,
+                code
+            );
         }
     }
 
@@ -164,8 +176,11 @@ mod ffi_tests {
         let (data, _) = call_highlight(code, "rust");
         let tokens = decode_tokens(&data);
         let types: std::collections::HashSet<u8> = tokens.iter().map(|(t, _)| *t).collect();
-        assert!(types.len() >= 3,
-            "Expected >=3 distinct token types, got {:?}", types);
+        assert!(
+            types.len() >= 3,
+            "Expected >=3 distinct token types, got {:?}",
+            types
+        );
     }
 
     // --- Empty / edge cases ---
@@ -183,7 +198,11 @@ mod ffi_tests {
     fn test_highlight_empty_code_multiple_langs() {
         for lang in &["rust", "python", "javascript", "c", "go"] {
             let (data, data_len) = call_highlight("", lang);
-            assert_eq!(data_len, 2, "Lang {}: empty code should have data_len=2", lang);
+            assert_eq!(
+                data_len, 2,
+                "Lang {}: empty code should have data_len=2",
+                lang
+            );
             let count = u16::from_le_bytes([data[0], data[1]]);
             assert_eq!(count, 0);
         }
@@ -198,8 +217,14 @@ mod ffi_tests {
         let lang = CString::new("nonexistent_lang_xyz123").unwrap();
         let output = fastmarkdown_highlight(code.as_ptr(), lang.as_ptr());
 
-        assert!(output.data.is_null(), "data should be null for unknown language");
-        assert_eq!(output.data_len, 0, "data_len should be 0 for unknown language");
+        assert!(
+            output.data.is_null(),
+            "data should be null for unknown language"
+        );
+        assert_eq!(
+            output.data_len, 0,
+            "data_len should be 0 for unknown language"
+        );
 
         // free on null data should be safe
         let mut out_copy = output;
@@ -246,8 +271,14 @@ mod ffi_tests {
         assert!(data.len() >= 2);
         let count = u16::from_le_bytes([data[0], data[1]]) as usize;
         let expected_size = 2 + count * 3;
-        assert_eq!(data.len(), expected_size,
-            "Data length {} != 2 + {}*3 = {}", data.len(), count, expected_size);
+        assert_eq!(
+            data.len(),
+            expected_size,
+            "Data length {} != 2 + {}*3 = {}",
+            data.len(),
+            count,
+            expected_size
+        );
     }
 
     #[test]
@@ -264,8 +295,7 @@ mod ffi_tests {
         let (data, _) = call_highlight(code, "rust");
         let tokens = decode_tokens(&data);
         for (i, (tt, len)) in tokens.iter().enumerate() {
-            assert!(*len > 0,
-                "Token {} (type={}) has zero length", i, tt);
+            assert!(*len > 0, "Token {} (type={}) has zero length", i, tt);
         }
     }
 
@@ -282,10 +312,12 @@ mod ffi_tests {
         ];
         for (lang, code) in cases {
             let (ffi_data, _) = call_highlight(code, lang);
-            let (rust_data, _) = safe_highlight(code, lang)
-                .expect("Rust API should succeed");
-            assert_eq!(ffi_data, rust_data,
-                "FFI and Rust API should return identical data for lang={}", lang);
+            let (rust_data, _) = safe_highlight(code, lang).expect("Rust API should succeed");
+            assert_eq!(
+                ffi_data, rust_data,
+                "FFI and Rust API should return identical data for lang={}",
+                lang
+            );
         }
     }
 

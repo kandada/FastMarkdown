@@ -9,6 +9,22 @@ fastmarkdown is a Rust-powered Markdown rendering SDK that parses Markdown into 
 
 ---
 
+## Install
+
+```toml
+[dependencies]
+fastmarkdown = "0.1"
+```
+
+Optional syntax highlighting for code blocks:
+
+```toml
+[dependencies]
+fastmarkdown = { version = "0.1", features = ["highlight"] }
+```
+
+---
+
 ## Why
 
 Traditional Markdown rendering on mobile suffers from:

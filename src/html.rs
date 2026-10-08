@@ -109,7 +109,9 @@ fn resolve_relative_links(html: &str, options: &MarkdownOptions) -> String {
                 let after_attr = abs_idx + attr_len;
                 match earliest {
                     None => earliest = Some((abs_idx, attr_len, after_attr)),
-                    Some((e, _, _)) if abs_idx < e => earliest = Some((abs_idx, attr_len, after_attr)),
+                    Some((e, _, _)) if abs_idx < e => {
+                        earliest = Some((abs_idx, attr_len, after_attr))
+                    }
                     _ => {}
                 }
             }
@@ -151,11 +153,46 @@ fn sanitize_html(html: &str) -> String {
     let mut builder = ammonia::Builder::new();
     builder
         .add_tags(&[
-            "b", "strong", "i", "em", "u", "s", "del", "code", "pre",
-            "a", "img", "br", "p", "h1", "h2", "h3", "h4", "h5", "h6",
-            "ul", "ol", "li", "blockquote", "table", "thead", "tbody",
-            "tr", "th", "td", "div", "span", "sub", "sup", "mark", "hr",
-            "details", "summary", "dl", "dt", "dd",
+            "b",
+            "strong",
+            "i",
+            "em",
+            "u",
+            "s",
+            "del",
+            "code",
+            "pre",
+            "a",
+            "img",
+            "br",
+            "p",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "ul",
+            "ol",
+            "li",
+            "blockquote",
+            "table",
+            "thead",
+            "tbody",
+            "tr",
+            "th",
+            "td",
+            "div",
+            "span",
+            "sub",
+            "sup",
+            "mark",
+            "hr",
+            "details",
+            "summary",
+            "dl",
+            "dt",
+            "dd",
         ])
         .add_generic_attribute_prefixes(&["class", "id", "data-", "aria-", "role"])
         .clean(html)

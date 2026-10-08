@@ -32,9 +32,13 @@ fn test_table_spans() {
     let output = to_spans(md);
     let spans = unsafe { std::slice::from_raw_parts(output.spans, output.span_count as usize) };
 
-    assert!(spans.iter().any(|s| s.block_type == BLOCK_TABLE_HEADER_CELL));
+    assert!(spans
+        .iter()
+        .any(|s| s.block_type == BLOCK_TABLE_HEADER_CELL));
     assert!(spans.iter().any(|s| s.block_type == BLOCK_TABLE_CELL));
-    unsafe { fastmarkdown::free_spans(output); }
+    unsafe {
+        fastmarkdown::free_spans(output);
+    }
 }
 
 #[test]
@@ -46,7 +50,8 @@ fn test_empty_table_cells() {
 
 #[test]
 fn test_table_with_markdown_in_cells() {
-    let md = "| Syntax | Example |\n|--------|---------|\n| Bold | **bold** |\n| Code | `let x = 1` |";
+    let md =
+        "| Syntax | Example |\n|--------|---------|\n| Bold | **bold** |\n| Code | `let x = 1` |";
     let html = to_html(md);
     assert!(html.contains("<table>"));
     // Inline markdown in table cells should be rendered
@@ -93,7 +98,8 @@ fn test_table_trailing_whitespace() {
 
 #[test]
 fn test_mixed_alignment() {
-    let md = "| Left | Center | Right | None |\n|:-----|:------:|------:|------|\n| a | b | c | d |";
+    let md =
+        "| Left | Center | Right | None |\n|:-----|:------:|------:|------|\n| a | b | c | d |";
     let html = to_html(md);
     assert!(html.contains("<table>"));
 }

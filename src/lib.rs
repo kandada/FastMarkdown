@@ -1,40 +1,34 @@
 // Copyright (c) 2025 xiefujin <490021684@qq.com>
 // Licensed under Apache-2.0, see LICENSE file for full license terms.
 
-pub mod options;
-pub mod span;
-pub mod theme;
-pub mod math;
+pub mod ffi;
 pub mod highlight;
 pub mod html;
+pub mod math;
+pub mod options;
 pub mod plain;
+pub mod span;
 pub mod spans_renderer;
 pub mod stream;
-pub mod ffi;
+pub mod theme;
 
-pub use options::{HtmlMode, MarkdownOptions, MathMode};
-pub use theme::ThemeConfig;
-pub use span::{
-    Span, SpanOutput, SpanDelta, SpanDeltaKind,
-    FLAG_BOLD, FLAG_ITALIC, FLAG_STRIKETHROUGH, FLAG_INLINE_CODE,
-    FLAG_LINK, FLAG_IMAGE, FLAG_MATH, FLAG_SUBSCRIPT, FLAG_SUPERSCRIPT,
-    BLOCK_PARAGRAPH, BLOCK_HEADING_H1, BLOCK_HEADING_H2, BLOCK_HEADING_H3,
-    BLOCK_HEADING_H4, BLOCK_HEADING_H5, BLOCK_HEADING_H6,
-    BLOCK_CODE, BLOCK_BLOCKQUOTE, BLOCK_LIST_ITEM_ORDERED,
-    BLOCK_LIST_ITEM_UNORDERED, BLOCK_TABLE_CELL, BLOCK_TABLE_HEADER_CELL,
-    BLOCK_HORIZONTAL_RULE, BLOCK_MATH_BLOCK, BLOCK_IMAGE,
-    EXTRA_KIND_LINK_URL, EXTRA_KIND_IMAGE_URL,
-    EXTRA_KIND_CODE_LANGUAGE, EXTRA_KIND_TABLE_METADATA,
-    EXTRA_KIND_CODE_HIGHLIGHT, EXTRA_KIND_LIST_META,
-};
 pub use highlight::{
-    TOKEN_OTHER, TOKEN_KEYWORD, TOKEN_STRING, TOKEN_COMMENT, TOKEN_NUMBER,
-    TOKEN_FUNCTION, TOKEN_TYPE, TOKEN_OPERATOR, TOKEN_PUNCTUATION,
-    TOKEN_VARIABLE, TOKEN_CONSTANT, TOKEN_BUILTIN,
-    TOKEN_ENTITY, TOKEN_MARKUP, TOKEN_REGEX,
-    TOKEN_TYPE_COUNT, HighlightToken,
+    HighlightToken, TOKEN_BUILTIN, TOKEN_COMMENT, TOKEN_CONSTANT, TOKEN_ENTITY, TOKEN_FUNCTION,
+    TOKEN_KEYWORD, TOKEN_MARKUP, TOKEN_NUMBER, TOKEN_OPERATOR, TOKEN_OTHER, TOKEN_PUNCTUATION,
+    TOKEN_REGEX, TOKEN_STRING, TOKEN_TYPE, TOKEN_TYPE_COUNT, TOKEN_VARIABLE,
+};
+pub use options::{HtmlMode, MarkdownOptions, MathMode};
+pub use span::{
+    Span, SpanDelta, SpanDeltaKind, SpanOutput, BLOCK_BLOCKQUOTE, BLOCK_CODE, BLOCK_HEADING_H1,
+    BLOCK_HEADING_H2, BLOCK_HEADING_H3, BLOCK_HEADING_H4, BLOCK_HEADING_H5, BLOCK_HEADING_H6,
+    BLOCK_HORIZONTAL_RULE, BLOCK_IMAGE, BLOCK_LIST_ITEM_ORDERED, BLOCK_LIST_ITEM_UNORDERED,
+    BLOCK_MATH_BLOCK, BLOCK_PARAGRAPH, BLOCK_TABLE_CELL, BLOCK_TABLE_HEADER_CELL,
+    EXTRA_KIND_CODE_HIGHLIGHT, EXTRA_KIND_CODE_LANGUAGE, EXTRA_KIND_IMAGE_URL, EXTRA_KIND_LINK_URL,
+    EXTRA_KIND_LIST_META, EXTRA_KIND_TABLE_METADATA, FLAG_BOLD, FLAG_IMAGE, FLAG_INLINE_CODE,
+    FLAG_ITALIC, FLAG_LINK, FLAG_MATH, FLAG_STRIKETHROUGH, FLAG_SUBSCRIPT, FLAG_SUPERSCRIPT,
 };
 pub use stream::StreamRenderer;
+pub use theme::ThemeConfig;
 
 // Re-export OwnedSpanOutput for safe Rust consumers
 pub use spans_renderer::OwnedSpanOutput;
@@ -100,10 +94,8 @@ pub unsafe fn free_spans(output: SpanOutput) {
         return;
     }
     if output.text_len > 0 {
-        let fat = std::ptr::slice_from_raw_parts_mut(
-            output.text as *mut u8,
-            output.text_len as usize,
-        );
+        let fat =
+            std::ptr::slice_from_raw_parts_mut(output.text as *mut u8, output.text_len as usize);
         drop(Box::from_raw(fat));
     }
     if output.span_count > 0 {

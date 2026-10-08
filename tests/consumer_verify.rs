@@ -13,13 +13,18 @@ fn get_extra(output: &SpanOutput) -> &[u8] {
 
 fn get_text(output: &SpanOutput) -> &str {
     unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(output.text, output.text_len as usize))
-            .unwrap()
+        std::str::from_utf8(std::slice::from_raw_parts(
+            output.text,
+            output.text_len as usize,
+        ))
+        .unwrap()
     }
 }
 
 fn free(output: SpanOutput) {
-    unsafe { fastmarkdown::free_spans(output); }
+    unsafe {
+        fastmarkdown::free_spans(output);
+    }
 }
 
 fn parse_extra_chunks(extra: &[u8]) -> Vec<(u8, Vec<u8>)> {
@@ -50,11 +55,18 @@ fn test_extra_chunks_are_parseable() {
     let extra = get_extra(&output);
     let chunks = parse_extra_chunks(extra);
 
-    assert!(chunks.len() >= 4, "Expected at least 4 chunks (3 links + 1 image), got {}", chunks.len());
+    assert!(
+        chunks.len() >= 4,
+        "Expected at least 4 chunks (3 links + 1 image), got {}",
+        chunks.len()
+    );
     for (kind, data) in &chunks {
         assert!(!data.is_empty(), "Empty chunk data for kind {}", kind);
-        assert!(*kind == EXTRA_KIND_LINK_URL || *kind == EXTRA_KIND_IMAGE_URL,
-            "Unexpected kind {}", kind);
+        assert!(
+            *kind == EXTRA_KIND_LINK_URL || *kind == EXTRA_KIND_IMAGE_URL,
+            "Unexpected kind {}",
+            kind
+        );
     }
     free(output);
 }
@@ -71,7 +83,11 @@ fn test_extra_chunk_header_sizes() {
     let data = &extra[3..3 + data_len];
     // The URL data should contain "http://a"
     assert!(std::str::from_utf8(data).unwrap().contains("http"));
-    assert!(data.len() >= 7, "Expected at least 7 bytes for URL, got {}", data.len());
+    assert!(
+        data.len() >= 7,
+        "Expected at least 7 bytes for URL, got {}",
+        data.len()
+    );
 
     free(output);
 }
@@ -85,8 +101,13 @@ fn test_extra_chunks_in_span_order() {
     let chunks = parse_extra_chunks(extra);
 
     let link_spans: Vec<&Span> = spans.iter().filter(|s| s.is_link()).collect();
-    assert_eq!(link_spans.len(), chunks.len(),
-        "Link spans ({}) and chunks ({}) should match", link_spans.len(), chunks.len());
+    assert_eq!(
+        link_spans.len(),
+        chunks.len(),
+        "Link spans ({}) and chunks ({}) should match",
+        link_spans.len(),
+        chunks.len()
+    );
     assert_eq!(chunks[0].1, b"https://one.com");
     assert_eq!(chunks[1].1, b"https://two.org");
 
@@ -101,24 +122,20 @@ fn test_extra_chunks_in_span_order() {
 fn test_code_language_in_extra_with_kind() {
     let md = "```python\ndef foo():\n    pass\n```";
     let output = to_spans(md);
-    let spans = get_spans(&output);
+    let _spans = get_spans(&output);
     let extra = get_extra(&output);
     let chunks = parse_extra_chunks(extra);
 
     // Should have a CODE_LANGUAGE chunk with "python"
-    let lang_chunks: Vec<_> = chunks.iter()
+    let lang_chunks: Vec<_> = chunks
+        .iter()
         .filter(|(k, _)| *k == EXTRA_KIND_CODE_LANGUAGE)
         .collect();
     assert_eq!(lang_chunks.len(), 1, "Expected exactly 1 language chunk");
     assert_eq!(lang_chunks[0].1, b"python");
 
-    // At least one code span should reference it via extra_len
-    let code_spans: Vec<&Span> = spans.iter()
-        .filter(|s| s.block_type == BLOCK_CODE)
-        .collect();
-    assert!(code_spans.iter().any(|s| s.extra_len > 0),
-        "At least one code span should have extra_len > 0");
-
+    // The chunk is matched positionally by the consumer (one per code block);
+    // it is no longer span-linked via `extra_len`.
     free(output);
 }
 
@@ -129,8 +146,14 @@ fn test_code_block_no_language() {
     let extra = get_extra(&output);
     let chunks = parse_extra_chunks(extra);
 
-    // No language chunk for unlabeled code blocks
-    assert!(!chunks.iter().any(|(k, _)| *k == EXTRA_KIND_CODE_LANGUAGE));
+    // An unlabeled code block still emits an (empty) language chunk so the
+    // positional matching of later code blocks stays aligned.
+    let lang_chunks: Vec<_> = chunks
+        .iter()
+        .filter(|(k, _)| *k == EXTRA_KIND_CODE_LANGUAGE)
+        .collect();
+    assert_eq!(lang_chunks.len(), 1, "one language chunk per code block");
+    assert!(lang_chunks[0].1.is_empty(), "language chunk must be empty");
     free(output);
 }
 
@@ -141,7 +164,8 @@ fn test_code_block_with_spaces_in_language() {
     let extra = get_extra(&output);
     let chunks = parse_extra_chunks(extra);
 
-    let lang = chunks.iter()
+    let lang = chunks
+        .iter()
         .find(|(k, _)| *k == EXTRA_KIND_CODE_LANGUAGE)
         .expect("Language chunk missing");
     assert_eq!(lang.1, b"c++");
@@ -155,7 +179,9 @@ fn test_code_block_bash() {
     let extra = get_extra(&output);
     let chunks = parse_extra_chunks(extra);
 
-    assert!(chunks.iter().any(|(k, d)| *k == EXTRA_KIND_CODE_LANGUAGE && d == b"bash"));
+    assert!(chunks
+        .iter()
+        .any(|(k, d)| *k == EXTRA_KIND_CODE_LANGUAGE && d == b"bash"));
     free(output);
 }
 
@@ -172,7 +198,8 @@ fn test_table_metadata_parseable_by_consumer() {
     let chunks = parse_extra_chunks(extra);
 
     // Find table metadata chunk
-    let meta = chunks.iter()
+    let meta = chunks
+        .iter()
         .find(|(k, _)| *k == EXTRA_KIND_TABLE_METADATA)
         .expect("Table metadata missing");
     let col_count = meta.1[0] as usize;
@@ -184,10 +211,12 @@ fn test_table_metadata_parseable_by_consumer() {
     assert_eq!(meta.1[7], 3); // Right
 
     // Count cells
-    let header_cells: Vec<_> = spans.iter()
+    let header_cells: Vec<_> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_TABLE_HEADER_CELL)
         .collect();
-    let data_cells: Vec<_> = spans.iter()
+    let data_cells: Vec<_> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_TABLE_CELL)
         .collect();
 
@@ -204,7 +233,8 @@ fn test_multiple_tables_each_have_metadata() {
     let extra = get_extra(&output);
     let chunks = parse_extra_chunks(extra);
 
-    let meta_chunks: Vec<_> = chunks.iter()
+    let meta_chunks: Vec<_> = chunks
+        .iter()
         .filter(|(k, _)| *k == EXTRA_KIND_TABLE_METADATA)
         .collect();
     assert_eq!(meta_chunks.len(), 2, "Two tables → two metadata chunks");
@@ -278,8 +308,10 @@ fn test_nested_blockquote_depth() {
     let md = "> > deeply nested quote";
     let output = to_spans(md);
     let spans = get_spans(&output);
-    assert!(spans.iter().any(|s| s.block_depth >= 2),
-        "Nested blockquotes should have depth >= 2");
+    assert!(
+        spans.iter().any(|s| s.block_depth >= 2),
+        "Nested blockquotes should have depth >= 2"
+    );
     free(output);
 }
 
@@ -289,14 +321,18 @@ fn test_list_items_share_same_depth_at_same_level() {
     let output = to_spans(md);
     let spans = get_spans(&output);
 
-    let depths: Vec<u8> = spans.iter()
+    let depths: Vec<u8> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_LIST_ITEM_UNORDERED)
         .map(|s| s.block_depth)
         .collect();
     assert!(depths.len() >= 3);
     let first = depths[0];
-    assert!(depths.iter().all(|&d| d == first),
-        "All items at same list level should have same depth: {:?}", depths);
+    assert!(
+        depths.iter().all(|&d| d == first),
+        "All items at same list level should have same depth: {:?}",
+        depths
+    );
     free(output);
 }
 
@@ -306,7 +342,8 @@ fn test_mixed_list_and_blockquote_nesting() {
     let output = to_spans(md);
     let spans = get_spans(&output);
 
-    let list_spans: Vec<_> = spans.iter()
+    let list_spans: Vec<_> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_LIST_ITEM_UNORDERED)
         .collect();
     assert!(!list_spans.is_empty());
@@ -321,7 +358,8 @@ fn test_each_paragraph_has_unique_seq() {
     let output = to_spans(md);
     let spans = get_spans(&output);
 
-    let para_spans: Vec<_> = spans.iter()
+    let para_spans: Vec<_> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_PARAGRAPH)
         .collect();
     let mut seqs: Vec<u16> = para_spans.iter().map(|s| s.block_seq).collect();
@@ -337,11 +375,13 @@ fn test_code_block_has_its_own_seq() {
     let output = to_spans(md);
     let spans = get_spans(&output);
 
-    let code_seqs: Vec<u16> = spans.iter()
+    let code_seqs: Vec<u16> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_CODE)
         .map(|s| s.block_seq)
         .collect();
-    let para_seqs: Vec<u16> = spans.iter()
+    let para_seqs: Vec<u16> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_PARAGRAPH)
         .map(|s| s.block_seq)
         .collect();
@@ -349,8 +389,10 @@ fn test_code_block_has_its_own_seq() {
     assert!(!code_seqs.is_empty());
     assert!(!para_seqs.is_empty());
     // Code block should have a different seq from adjacent paragraphs
-    assert!(!code_seqs.iter().any(|&c| para_seqs.contains(&c)),
-        "Code block seq should not overlap with paragraph seqs");
+    assert!(
+        !code_seqs.iter().any(|&c| para_seqs.contains(&c)),
+        "Code block seq should not overlap with paragraph seqs"
+    );
     free(output);
 }
 
@@ -360,9 +402,9 @@ fn test_table_has_its_own_seq() {
     let output = to_spans(md);
     let spans = get_spans(&output);
 
-    let table_seqs: Vec<u16> = spans.iter()
-        .filter(|s| s.block_type == BLOCK_TABLE_CELL
-            || s.block_type == BLOCK_TABLE_HEADER_CELL)
+    let table_seqs: Vec<u16> = spans
+        .iter()
+        .filter(|s| s.block_type == BLOCK_TABLE_CELL || s.block_type == BLOCK_TABLE_HEADER_CELL)
         .map(|s| s.block_seq)
         .collect();
     assert!(!table_seqs.is_empty());
@@ -384,7 +426,8 @@ fn test_horizontal_rule_is_separate_block() {
     assert!(spans.iter().any(|s| s.block_type == BLOCK_HORIZONTAL_RULE));
 
     // HR span should exist with correct block type
-    let hr_spans: Vec<_> = spans.iter()
+    let hr_spans: Vec<_> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_HORIZONTAL_RULE)
         .collect();
     assert_eq!(hr_spans.len(), 1, "Should have exactly 1 HR span");
@@ -401,7 +444,10 @@ fn test_text_buffer_has_block_separators() {
     let output = to_spans(md);
     let text = get_text(&output);
     // Blocks should be separated by newlines
-    assert!(text.contains("\n"), "Text buffer should have newline separators");
+    assert!(
+        text.contains("\n"),
+        "Text buffer should have newline separators"
+    );
     free(output);
 }
 
@@ -414,7 +460,12 @@ fn test_text_buffer_table_cell_tabs() {
     // Cells within a row should be tab-separated
     let tab_count = text.matches('\t').count();
     // Header row: 2 tabs between 3 cells; Data row: 2 tabs between 3 cells = 4 tabs
-    assert!(tab_count >= 2, "Expected tabs between table cells, got {} tabs in: {:?}", tab_count, text);
+    assert!(
+        tab_count >= 2,
+        "Expected tabs between table cells, got {} tabs in: {:?}",
+        tab_count,
+        text
+    );
     free(output);
 }
 
@@ -426,7 +477,11 @@ fn test_text_buffer_table_row_newlines() {
 
     // Should have newlines between rows
     let newline_count = text.matches('\n').count();
-    assert!(newline_count >= 2, "Expected newlines between table rows, got {}", newline_count);
+    assert!(
+        newline_count >= 2,
+        "Expected newlines between table rows, got {}",
+        newline_count
+    );
     free(output);
 }
 
@@ -443,9 +498,14 @@ fn test_display_math_gets_block_type() {
     let spans = get_spans(&output);
 
     // Display math should produce BLOCK_MATH_BLOCK type
-    assert!(spans.iter().any(|s| s.block_type == BLOCK_MATH_BLOCK),
+    assert!(
+        spans.iter().any(|s| s.block_type == BLOCK_MATH_BLOCK),
         "Display math should use BLOCK_MATH_BLOCK, spans: {:?}",
-        spans.iter().map(|s| (s.block_type, s.flags)).collect::<Vec<_>>());
+        spans
+            .iter()
+            .map(|s| (s.block_type, s.flags))
+            .collect::<Vec<_>>()
+    );
     free(output);
 }
 
@@ -457,8 +517,10 @@ fn test_inline_math_has_flag() {
     let output = to_spans_with_options("Formula $x^2$ here", &opts);
     let spans = get_spans(&output);
 
-    assert!(spans.iter().any(|s| s.is_math()),
-        "Inline math should have FLAG_MATH");
+    assert!(
+        spans.iter().any(|s| s.is_math()),
+        "Inline math should have FLAG_MATH"
+    );
     free(output);
 }
 
@@ -468,8 +530,10 @@ fn test_dollar_literal_no_math_in_spans() {
     let output = to_spans("Price: $5.99 for $HOME");
     let spans = get_spans(&output);
 
-    assert!(spans.iter().all(|s| !s.is_math()),
-        "Literal mode: no span should have math flag");
+    assert!(
+        spans.iter().all(|s| !s.is_math()),
+        "Literal mode: no span should have math flag"
+    );
     free(output);
 }
 
@@ -526,14 +590,18 @@ fn main() {
         }
         current.push(s);
     }
-    if !current.is_empty() { blocks.push(current); }
+    if !current.is_empty() {
+        blocks.push(current);
+    }
 
-    assert!(blocks.len() >= 10, "Expected >=10 blocks, got {}", blocks.len());
+    assert!(
+        blocks.len() >= 10,
+        "Expected >=10 blocks, got {}",
+        blocks.len()
+    );
 
     // ---- 2. Verify block types ----
-    let block_types: Vec<u8> = blocks.iter()
-        .map(|b| b[0].block_type)
-        .collect();
+    let block_types: Vec<u8> = blocks.iter().map(|b| b[0].block_type).collect();
     assert!(block_types.contains(&BLOCK_HEADING_H1));
     assert!(block_types.contains(&BLOCK_HEADING_H2));
     assert!(block_types.contains(&BLOCK_HEADING_H3));
@@ -544,34 +612,41 @@ fn main() {
     assert!(block_types.contains(&BLOCK_LIST_ITEM_UNORDERED));
 
     // ---- 3. Extract code language ----
-    let code_lang = chunks.iter()
-        .find(|(k, _)| *k == EXTRA_KIND_CODE_LANGUAGE);
+    let code_lang = chunks.iter().find(|(k, _)| *k == EXTRA_KIND_CODE_LANGUAGE);
     assert!(code_lang.is_some(), "Should have code language chunk");
     assert_eq!(code_lang.unwrap().1, b"rust");
 
     // ---- 4. Extract table metadata ----
-    let table_meta = chunks.iter()
-        .find(|(k, _)| *k == EXTRA_KIND_TABLE_METADATA);
+    let table_meta = chunks.iter().find(|(k, _)| *k == EXTRA_KIND_TABLE_METADATA);
     assert!(table_meta.is_some(), "Should have table metadata chunk");
     let col_count = table_meta.unwrap().1[0] as usize;
     assert_eq!(col_count, 2);
 
     // ---- 5. Count table rows ----
-    let data_cells: Vec<_> = spans.iter()
+    let data_cells: Vec<_> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_TABLE_CELL)
         .collect();
     let rows = data_cells.len() / col_count;
     assert_eq!(rows, 2);
 
     // ---- 6. Verify list depths ----
-    let list_depths: Vec<u8> = spans.iter()
+    let list_depths: Vec<u8> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_LIST_ITEM_UNORDERED)
         .map(|s| s.block_depth)
         .collect();
     // Top-level items: depth 1 (List is a nesting container)
-    assert!(list_depths.contains(&1), "Should have top-level items at depth 1, got {:?}", list_depths);
+    assert!(
+        list_depths.contains(&1),
+        "Should have top-level items at depth 1, got {:?}",
+        list_depths
+    );
     // Nested item has depth >= 2
-    assert!(list_depths.iter().any(|&d| d >= 2), "Should have nested items");
+    assert!(
+        list_depths.iter().any(|&d| d >= 2),
+        "Should have nested items"
+    );
 
     // ---- 7. Verify inline styles are preserved ----
     assert!(spans.iter().any(|s| s.is_bold()));
@@ -579,13 +654,17 @@ fn main() {
     assert!(spans.iter().any(|s| s.is_italic()));
 
     // ---- 8. Verify link extraction ----
-    let link_count = chunks.iter()
+    let link_count = chunks
+        .iter()
         .filter(|(k, _)| *k == EXTRA_KIND_LINK_URL)
         .count();
     assert_eq!(link_count, 0, "No links in this document");
 
     // ---- 9. Text buffer is non-trivial ----
-    assert!(text.len() > 50, "Text buffer should contain the full document");
+    assert!(
+        text.len() > 50,
+        "Text buffer should contain the full document"
+    );
 
     free(output);
 }

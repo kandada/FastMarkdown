@@ -46,7 +46,9 @@ mod tests {
     }
 
     fn free(output: SpanOutput) {
-        unsafe { fastmarkdown::free_spans(output); }
+        unsafe {
+            fastmarkdown::free_spans(output);
+        }
     }
 
     #[test]
@@ -59,7 +61,10 @@ mod tests {
         let chunks = parse_chunks(extra);
 
         let has_highlight = chunks.iter().any(|(k, _)| *k == EXTRA_KIND_CODE_HIGHLIGHT);
-        assert!(has_highlight, "Should have highlight chunk for Rust code block");
+        assert!(
+            has_highlight,
+            "Should have highlight chunk for Rust code block"
+        );
         free(output);
     }
 
@@ -72,8 +77,16 @@ mod tests {
         let extra = get_extra(&output);
         let chunks = parse_chunks(extra);
 
-        let has_highlight = chunks.iter().any(|(k, _)| *k == EXTRA_KIND_CODE_HIGHLIGHT);
-        assert!(!has_highlight, "Should NOT have highlight chunk when disabled");
+        // A chunk is always emitted (for block alignment) but with 0 tokens.
+        let hl = chunks
+            .iter()
+            .find(|(k, _)| *k == EXTRA_KIND_CODE_HIGHLIGHT)
+            .expect("highlight chunk is always emitted for alignment");
+        assert_eq!(
+            u16::from_le_bytes([hl.1[0], hl.1[1]]),
+            0,
+            "disabled → no tokens"
+        );
         free(output);
     }
 
@@ -86,7 +99,9 @@ mod tests {
         let extra = get_extra(&output);
         let chunks = parse_chunks(extra);
 
-        let hl = chunks.iter().find(|(k, _)| *k == EXTRA_KIND_CODE_HIGHLIGHT)
+        let hl = chunks
+            .iter()
+            .find(|(k, _)| *k == EXTRA_KIND_CODE_HIGHLIGHT)
             .expect("Should have highlight chunk");
         let tokens = parse_highlight_data(&hl.1);
         let total: u32 = tokens.iter().map(|(_, len)| *len as u32).sum();
@@ -104,12 +119,18 @@ mod tests {
         let extra = get_extra(&output);
         let chunks = parse_chunks(extra);
 
-        let hl = chunks.iter().find(|(k, _)| *k == EXTRA_KIND_CODE_HIGHLIGHT)
+        let hl = chunks
+            .iter()
+            .find(|(k, _)| *k == EXTRA_KIND_CODE_HIGHLIGHT)
             .expect("Should have highlight chunk");
         let tokens = parse_highlight_data(&hl.1);
         let types: std::collections::HashSet<u8> = tokens.iter().map(|(t, _)| *t).collect();
 
-        assert!(types.len() >= 3, "Expected >=3 distinct types, got {:?}", types);
+        assert!(
+            types.len() >= 3,
+            "Expected >=3 distinct types, got {:?}",
+            types
+        );
         free(output);
     }
 
@@ -122,8 +143,10 @@ mod tests {
         let extra = get_extra(&output);
         let chunks = parse_chunks(extra);
 
-        assert!(chunks.iter().any(|(k, _)| *k == EXTRA_KIND_CODE_HIGHLIGHT),
-            "Python should produce highlight tokens");
+        assert!(
+            chunks.iter().any(|(k, _)| *k == EXTRA_KIND_CODE_HIGHLIGHT),
+            "Python should produce highlight tokens"
+        );
         free(output);
     }
 
@@ -136,8 +159,10 @@ mod tests {
         let extra = get_extra(&output);
         let chunks = parse_chunks(extra);
 
-        assert!(chunks.iter().any(|(k, _)| *k == EXTRA_KIND_CODE_HIGHLIGHT),
-            "Bash should produce highlight tokens");
+        assert!(
+            chunks.iter().any(|(k, _)| *k == EXTRA_KIND_CODE_HIGHLIGHT),
+            "Bash should produce highlight tokens"
+        );
         free(output);
     }
 
@@ -150,8 +175,17 @@ mod tests {
         let extra = get_extra(&output);
         let chunks = parse_chunks(extra);
 
-        let has_highlight = chunks.iter().any(|(k, _)| *k == EXTRA_KIND_CODE_HIGHLIGHT);
-        assert!(!has_highlight, "Unknown language should not produce highlight chunk");
+        // Unknown language still emits a chunk (0 tokens) so later code blocks
+        // don't shift positionally.
+        let hl = chunks
+            .iter()
+            .find(|(k, _)| *k == EXTRA_KIND_CODE_HIGHLIGHT)
+            .expect("highlight chunk is always emitted for alignment");
+        assert_eq!(
+            u16::from_le_bytes([hl.1[0], hl.1[1]]),
+            0,
+            "unknown language → no tokens"
+        );
         free(output);
     }
 
@@ -176,11 +210,19 @@ mod tests {
         let extra = get_extra(&output);
         let chunks = parse_chunks(extra);
 
-        let lang_idx = chunks.iter().position(|(k, _)| *k == EXTRA_KIND_CODE_LANGUAGE);
-        let hl_idx = chunks.iter().position(|(k, _)| *k == EXTRA_KIND_CODE_HIGHLIGHT);
+        let lang_idx = chunks
+            .iter()
+            .position(|(k, _)| *k == EXTRA_KIND_CODE_LANGUAGE);
+        let hl_idx = chunks
+            .iter()
+            .position(|(k, _)| *k == EXTRA_KIND_CODE_HIGHLIGHT);
 
         if let (Some(li), Some(hi)) = (lang_idx, hl_idx) {
-            assert_eq!(hi, li + 1, "Highlight chunk should immediately follow language chunk");
+            assert_eq!(
+                hi,
+                li + 1,
+                "Highlight chunk should immediately follow language chunk"
+            );
         }
         free(output);
     }

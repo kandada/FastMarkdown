@@ -88,9 +88,13 @@ fn build_spans(md: &str, options: &MarkdownOptions) -> OwnedSpanOutput {
     let parser = Parser::new_ext(md, options.to_pulldown_options());
     let highlight_enabled = cfg!(feature = "highlight") && {
         #[cfg(feature = "highlight")]
-        { options.highlight }
+        {
+            options.highlight
+        }
         #[cfg(not(feature = "highlight"))]
-        { false }
+        {
+            false
+        }
     };
     let mut state = SpanBuildState::new(highlight_enabled, options.compute_utf16_offsets);
     for event in parser {
@@ -118,15 +122,15 @@ struct SpanBuildState {
     table_alignments: Vec<Alignment>,
     in_table_head: bool,
     table_cells_in_row: u32,
-    col_widths: Vec<u16>,     // max char count per column
-    cell_char_count: u16,     // char count for current cell
+    col_widths: Vec<u16>, // max char count per column
+    cell_char_count: u16, // char count for current cell
 
-    // Code block language pending (written on first span of the block)
+    // Code block language pending (written at block end for every code block)
     pending_code_lang: Option<String>,
-    code_lang_written: bool,
     // Code text accumulation (for highlighting at block end)
     code_text_buf: String,
-    // Highlight toggle from options
+    // Highlight toggle from options (only read when the `highlight` feature is on)
+    #[allow(dead_code)]
     highlight_enabled: bool,
     // Skip text while inside metadata blocks
     in_metadata_block: bool,
@@ -155,7 +159,6 @@ impl SpanBuildState {
             col_widths: Vec::new(),
             cell_char_count: 0,
             pending_code_lang: None,
-            code_lang_written: false,
             code_text_buf: String::new(),
             highlight_enabled,
             in_metadata_block: false,
@@ -361,12 +364,15 @@ impl SpanBuildState {
             }
             TagEnd::CodeBlock => {
                 self.push_text_sep("\n");
-                if self.highlight_enabled && !self.code_text_buf.is_empty() {
-                    self.highlight_code_block();
-                }
+                // Emit BOTH chunks for every code block (empty when absent) so the
+                // consumer can match them to code blocks *by position*. A missing
+                // chunk (unknown language / huge block) used to shift the
+                // language + highlight of every later code block.
+                let lang = self.pending_code_lang.clone().unwrap_or_default();
+                self.write_extra_chunk(EXTRA_KIND_CODE_LANGUAGE, lang.as_bytes());
+                self.highlight_code_block();
                 self.code_text_buf.clear();
                 self.pending_code_lang = None;
-                self.code_lang_written = false;
                 self.pop_nesting();
             }
             TagEnd::List(_) => {
@@ -497,8 +503,13 @@ impl SpanBuildState {
         let offset = self.text_buf.len() as u32;
         self.text_buf.push_str("\n---\n");
         self.spans.push(Span::new(
-            offset, 5, 0, BLOCK_HORIZONTAL_RULE, 0,
-            self.block_depth, self.block_seq,
+            offset,
+            5,
+            0,
+            BLOCK_HORIZONTAL_RULE,
+            0,
+            self.block_depth,
+            self.block_seq,
         ));
     }
 
@@ -512,16 +523,22 @@ impl SpanBuildState {
         // Record UTF-16 offset at span start
         if self.compute_utf16 {
             self.utf16_offsets.push(self.utf16_offset);
-            for ch in text.chars() {
-                self.utf16_offset += ch.len_utf16() as u32;
+            // Pure ASCII (the common case for AI output) → UTF-8 bytes == UTF-16
+            // units, so skip the per-char iteration.
+            if text.is_ascii() {
+                self.utf16_offset += text.len() as u32;
+            } else {
+                for ch in text.chars() {
+                    self.utf16_offset += ch.len_utf16() as u32;
+                }
             }
         }
 
         // Track per-cell char count for column width estimation
         if block_type == BLOCK_TABLE_CELL || block_type == BLOCK_TABLE_HEADER_CELL {
-            self.cell_char_count = self.cell_char_count.saturating_add(
-                text.chars().count() as u16
-            );
+            self.cell_char_count = self
+                .cell_char_count
+                .saturating_add(text.chars().count() as u16);
         }
 
         let extra_len = self.compute_extra_len(flags, block_type);
@@ -537,7 +554,7 @@ impl SpanBuildState {
         self.spans.push(span);
     }
 
-    fn compute_extra_len(&mut self, flags: u32, block_type: u8) -> u32 {
+    fn compute_extra_len(&mut self, flags: u32, _block_type: u8) -> u32 {
         // Link / image URLs
         if (flags & FLAG_LINK) != 0 || (flags & FLAG_IMAGE) != 0 {
             let url = self.link_urls.last().cloned();
@@ -552,47 +569,41 @@ impl SpanBuildState {
             return 0;
         }
 
-        // Code block language — write once for the first span of the block
-        if block_type == BLOCK_CODE && !self.code_lang_written {
-            let lang = self.pending_code_lang.clone();
-            if let Some(lang) = lang {
-                self.code_lang_written = true;
-                let len = self.write_extra_chunk(
-                    EXTRA_KIND_CODE_LANGUAGE, lang.as_bytes(),
-                );
-                return len;
-            }
-            return 0;
-        }
-
-        // Table metadata — write once, attach to first table cell span
-        if block_type == BLOCK_TABLE_HEADER_CELL || block_type == BLOCK_TABLE_CELL {
-            return 0; // metadata is written at table start; consumer scans for it
-        }
-
+        // Code-block language is emitted once per block at `TagEnd::CodeBlock`
+        // (see `highlight_code_block`) so every block gets a chunk in order.
         0
     }
 
     fn highlight_code_block(&mut self) {
-        #[cfg(feature = "highlight")]
-        {
-            let lang = self.pending_code_lang.as_deref().unwrap_or("text");
-            if let Some(tokens) = crate::highlight::highlight_code(&self.code_text_buf, lang) {
-                if tokens.len() > u16::MAX as usize {
-                    return; // too many tokens, skip highlighting
+        // Cap the syntect input: highlighting is decorative and its cost scales
+        // with code size. The host also caps it, but applying the cap here avoids
+        // the wasted work entirely — a multi-MB pasted block would otherwise run
+        // syntect over the whole thing before the host discards the result.
+        let tokens: Vec<crate::highlight::HighlightToken> = {
+            #[cfg(feature = "highlight")]
+            {
+                const MAX_HIGHLIGHT_BYTES: usize = 64 * 1024;
+                if self.highlight_enabled && self.code_text_buf.len() <= MAX_HIGHLIGHT_BYTES {
+                    let lang = self.pending_code_lang.as_deref().unwrap_or("text");
+                    crate::highlight::highlight_code(&self.code_text_buf, lang).unwrap_or_default()
+                } else {
+                    Vec::new()
                 }
-                let count = tokens.len() as u16;
-                let mut data: Vec<u8> = Vec::with_capacity(2 + tokens.len() * 3);
-                data.extend_from_slice(&count.to_le_bytes());
-                for t in &tokens {
-                    data.push(t.token_type);
-                    data.extend_from_slice(&t.len.to_le_bytes());
-                }
-                self.write_extra_chunk(EXTRA_KIND_CODE_HIGHLIGHT, &data);
             }
+            #[cfg(not(feature = "highlight"))]
+            {
+                Vec::new()
+            }
+        };
+        // Always emit a chunk (0 tokens when skipped) so code blocks stay aligned.
+        let tokens = &tokens[..tokens.len().min(u16::MAX as usize)];
+        let mut data: Vec<u8> = Vec::with_capacity(2 + tokens.len() * 3);
+        data.extend_from_slice(&(tokens.len() as u16).to_le_bytes());
+        for t in tokens {
+            data.push(t.token_type);
+            data.extend_from_slice(&t.len.to_le_bytes());
         }
-        #[cfg(not(feature = "highlight"))]
-        let _ = ();
+        self.write_extra_chunk(EXTRA_KIND_CODE_HIGHLIGHT, &data);
     }
 
     fn finish(&mut self) {
@@ -632,18 +643,23 @@ mod tests {
     use crate::{to_spans, to_spans_with_options};
 
     fn get_spans(output: SpanOutput) -> (Vec<Span>, String, Vec<u8>) {
-        let spans = unsafe {
-            std::slice::from_raw_parts(output.spans, output.span_count as usize)
-        }.to_vec();
+        let spans = unsafe { std::slice::from_raw_parts(output.spans, output.span_count as usize) }
+            .to_vec();
         let text = unsafe {
             std::str::from_utf8(std::slice::from_raw_parts(
-                output.text, output.text_len as usize,
-            )).unwrap().to_string()
+                output.text,
+                output.text_len as usize,
+            ))
+            .unwrap()
+            .to_string()
         };
         let extra = unsafe {
             std::slice::from_raw_parts(output.extra_data, output.extra_data_len as usize)
-        }.to_vec();
-        unsafe { crate::free_spans(output); }
+        }
+        .to_vec();
+        unsafe {
+            crate::free_spans(output);
+        }
         (spans, text, extra)
     }
 
@@ -662,6 +678,72 @@ mod tests {
             }
         }
         chunks
+    }
+
+    // ── code-block chunk alignment (regression) ─────────────────────
+
+    #[test]
+    fn every_code_block_emits_language_and_highlight_chunks() {
+        // An unknown / empty language must still emit a chunk, otherwise the
+        // positional matching shifts every later code block's lang + highlight.
+        let md = "```foobar\nx = 1\n```\n\n```\nplain\n```\n\n```rust\nfn main() {}\n```\n";
+        let (_s, _t, extra) = get_spans(to_spans(md));
+        let chunks = parse_extra_chunks(&extra);
+        let langs: Vec<String> = chunks
+            .iter()
+            .filter(|(k, _)| *k == EXTRA_KIND_CODE_LANGUAGE)
+            .map(|(_, d)| String::from_utf8_lossy(d).to_string())
+            .collect();
+        assert_eq!(
+            langs,
+            vec!["foobar".to_string(), "".to_string(), "rust".to_string()]
+        );
+        let hl = chunks
+            .iter()
+            .filter(|(k, _)| *k == EXTRA_KIND_CODE_HIGHLIGHT)
+            .count();
+        assert_eq!(hl, 3, "one highlight chunk per code block");
+    }
+
+    #[cfg(feature = "highlight")]
+    #[test]
+    fn huge_code_block_skips_highlight_but_keeps_chunk() {
+        let body = "x".repeat(200_000);
+        let md = format!("```rust\n{body}\n```\n");
+        let mut opts = MarkdownOptions::default();
+        opts.highlight = true;
+        let (_s, _t, extra) = get_spans(to_spans_with_options(&md, &opts));
+        let chunks = parse_extra_chunks(&extra);
+        let hl = chunks
+            .iter()
+            .find(|(k, _)| *k == EXTRA_KIND_CODE_HIGHLIGHT)
+            .map(|(_, d)| d.clone())
+            .expect("highlight chunk present");
+        assert!(hl.len() >= 2);
+        assert_eq!(
+            u16::from_le_bytes([hl[0], hl[1]]),
+            0,
+            "a >64KB block must skip highlighting"
+        );
+    }
+
+    #[cfg(feature = "highlight")]
+    #[test]
+    fn small_code_block_is_highlighted() {
+        let mut opts = MarkdownOptions::default();
+        opts.highlight = true;
+        let (_s, _t, extra) =
+            get_spans(to_spans_with_options("```rust\nfn main() {}\n```\n", &opts));
+        let chunks = parse_extra_chunks(&extra);
+        let hl = chunks
+            .iter()
+            .find(|(k, _)| *k == EXTRA_KIND_CODE_HIGHLIGHT)
+            .map(|(_, d)| d.clone())
+            .expect("highlight chunk");
+        assert!(
+            u16::from_le_bytes([hl[0], hl[1]]) > 0,
+            "a small block should be highlighted"
+        );
     }
 
     #[test]
@@ -702,8 +784,9 @@ mod tests {
         let link_span = spans.iter().find(|s| s.is_link()).unwrap();
         assert!(link_span.extra_len > 0);
         let chunks = parse_extra_chunks(&extra);
-        assert!(chunks.iter().any(|(k, d)| *k == EXTRA_KIND_LINK_URL
-            && d == b"https://example.com"));
+        assert!(chunks
+            .iter()
+            .any(|(k, d)| *k == EXTRA_KIND_LINK_URL && d == b"https://example.com"));
     }
 
     #[test]
@@ -711,8 +794,9 @@ mod tests {
         let (spans, _, extra) = get_spans(to_spans("```rust\nfn main() {}\n```"));
         assert!(spans.iter().any(|s| s.block_type == BLOCK_CODE));
         let chunks = parse_extra_chunks(&extra);
-        assert!(chunks.iter().any(|(k, d)| *k == EXTRA_KIND_CODE_LANGUAGE
-            && d == b"rust"));
+        assert!(chunks
+            .iter()
+            .any(|(k, d)| *k == EXTRA_KIND_CODE_LANGUAGE && d == b"rust"));
     }
 
     #[test]
@@ -730,7 +814,9 @@ mod tests {
     #[test]
     fn test_list_item() {
         let (spans, _, _) = get_spans(to_spans("- item one\n- item two"));
-        assert!(spans.iter().any(|s| s.block_type == BLOCK_LIST_ITEM_UNORDERED));
+        assert!(spans
+            .iter()
+            .any(|s| s.block_type == BLOCK_LIST_ITEM_UNORDERED));
     }
 
     #[test]
@@ -738,7 +824,9 @@ mod tests {
         let output = to_spans("");
         assert_eq!(output.span_count, 0);
         assert_eq!(output.text_len, 0);
-        unsafe { crate::free_spans(output); }
+        unsafe {
+            crate::free_spans(output);
+        }
     }
 
     #[test]
@@ -756,13 +844,16 @@ mod tests {
     #[test]
     fn test_table_cell_block_types() {
         let (spans, _, extra) = get_spans(to_spans(
-            "| Name | Value |\n|------|-------|\n| foo  | 42    |"
+            "| Name | Value |\n|------|-------|\n| foo  | 42    |",
         ));
-        assert!(spans.iter().any(|s| s.block_type == BLOCK_TABLE_HEADER_CELL));
+        assert!(spans
+            .iter()
+            .any(|s| s.block_type == BLOCK_TABLE_HEADER_CELL));
         assert!(spans.iter().any(|s| s.block_type == BLOCK_TABLE_CELL));
         let chunks = parse_extra_chunks(&extra);
-        assert!(chunks.iter().any(|(k, d)| *k == EXTRA_KIND_TABLE_METADATA
-            && d.len() >= 3));
+        assert!(chunks
+            .iter()
+            .any(|(k, d)| *k == EXTRA_KIND_TABLE_METADATA && d.len() >= 3));
     }
 
     // ── new block structure tests ────────────────────────────────
@@ -773,66 +864,92 @@ mod tests {
         let mut seqs: Vec<u16> = spans.iter().map(|s| s.block_seq).collect();
         seqs.sort();
         seqs.dedup();
-        assert!(seqs.len() >= 3, "H1, Para1, Para2 should each have unique seq");
+        assert!(
+            seqs.len() >= 3,
+            "H1, Para1, Para2 should each have unique seq"
+        );
     }
 
     #[test]
     fn test_list_items_get_unique_seq() {
         let (spans, _, _) = get_spans(to_spans("- a\n- b\n- c"));
-        let list_seqs: Vec<u16> = spans.iter()
+        let list_seqs: Vec<u16> = spans
+            .iter()
             .filter(|s| s.block_type == BLOCK_LIST_ITEM_UNORDERED)
             .map(|s| s.block_seq)
             .collect();
         let mut unique: Vec<u16> = list_seqs.clone();
         unique.sort();
         unique.dedup();
-        assert_eq!(unique.len(), 3, "Each list item should have unique seq, got {:?}", list_seqs);
+        assert_eq!(
+            unique.len(),
+            3,
+            "Each list item should have unique seq, got {:?}",
+            list_seqs
+        );
     }
 
     #[test]
     fn test_list_items_same_depth() {
         let (spans, _, _) = get_spans(to_spans("- a\n- b"));
-        let depths: Vec<u8> = spans.iter()
+        let depths: Vec<u8> = spans
+            .iter()
             .filter(|s| s.block_type == BLOCK_LIST_ITEM_UNORDERED)
             .map(|s| s.block_depth)
             .collect();
         let first = depths[0];
-        assert!(depths.iter().all(|&d| d == first),
-            "All top-level list items should have same depth, got {:?}", depths);
+        assert!(
+            depths.iter().all(|&d| d == first),
+            "All top-level list items should have same depth, got {:?}",
+            depths
+        );
     }
 
     #[test]
     fn test_nested_list_depths() {
         let (spans, _, _) = get_spans(to_spans("- A\n  - B\n    - C\n- D"));
-        let depths: Vec<u8> = spans.iter()
+        let depths: Vec<u8> = spans
+            .iter()
             .filter(|s| s.block_type == BLOCK_LIST_ITEM_UNORDERED)
             .map(|s| s.block_depth)
             .collect();
         // Should have deep nesting for C (depth >= 3)
-        assert!(depths.iter().any(|&d| d >= 2), "Should have depth >= 2 for C, got {:?}", depths);
+        assert!(
+            depths.iter().any(|&d| d >= 2),
+            "Should have depth >= 2 for C, got {:?}",
+            depths
+        );
         // Top-level items A and D should have same depth
         if depths.len() >= 2 {
-            assert_eq!(depths[0], depths[depths.len() - 1],
-                "First and last list item should have same depth, got {:?}", depths);
+            assert_eq!(
+                depths[0],
+                depths[depths.len() - 1],
+                "First and last list item should have same depth, got {:?}",
+                depths
+            );
         }
     }
 
     #[test]
     fn test_table_cells_get_unique_seq() {
         let (spans, _, _) = get_spans(to_spans("| A | B |\n|---|---|\n| 1 | 2 |"));
-        let cell_seqs: Vec<(u8, u16)> = spans.iter()
-            .filter(|s| s.block_type == BLOCK_TABLE_CELL
-                || s.block_type == BLOCK_TABLE_HEADER_CELL)
+        let cell_seqs: Vec<(u8, u16)> = spans
+            .iter()
+            .filter(|s| s.block_type == BLOCK_TABLE_CELL || s.block_type == BLOCK_TABLE_HEADER_CELL)
             .map(|s| (s.block_type, s.block_seq))
             .collect();
         // Each cell should have its own seq for row/col reconstruction
-        assert!(cell_seqs.len() >= 4, "Expected 4 cells, got {}", cell_seqs.len());
+        assert!(
+            cell_seqs.len() >= 4,
+            "Expected 4 cells, got {}",
+            cell_seqs.len()
+        );
     }
 
     #[test]
     fn test_extra_data_self_describing() {
         let (_, _, extra) = get_spans(to_spans(
-            "[link](https://a.com) **bold** [img](https://b.com/pic.png)"
+            "[link](https://a.com) **bold** [img](https://b.com/pic.png)",
         ));
         let chunks = parse_extra_chunks(&extra);
         // Each chunk has kind + len + data, and they're in order
@@ -850,38 +967,47 @@ mod tests {
     #[test]
     fn test_code_language_in_extra_with_code_span() {
         let (spans, _, extra) = get_spans(to_spans("```python\nprint(1)\n```"));
-        let code_spans: Vec<&Span> = spans.iter()
+        let code_spans: Vec<&Span> = spans
+            .iter()
             .filter(|s| s.block_type == BLOCK_CODE)
             .collect();
         assert!(!code_spans.is_empty());
-        // At least one code span references the language chunk
-        assert!(code_spans.iter().any(|s| s.extra_len > 0));
+        // The language chunk is emitted once per code block (at block end) and
+        // matched positionally by the consumer, not span-linked via `extra_len`.
         let chunks = parse_extra_chunks(&extra);
-        assert!(chunks.iter().any(|(k, d)| *k == EXTRA_KIND_CODE_LANGUAGE
-            && d == b"python"));
+        assert!(chunks
+            .iter()
+            .any(|(k, d)| *k == EXTRA_KIND_CODE_LANGUAGE && d == b"python"));
     }
 
     #[test]
     fn test_table_metadata_in_extra() {
-        let (_, _, extra) = get_spans(to_spans(
-            "| Left | Right |\n|:-----|------:|\n| a | b |"
-        ));
+        let (_, _, extra) = get_spans(to_spans("| Left | Right |\n|:-----|------:|\n| a | b |"));
         let chunks = parse_extra_chunks(&extra);
-        let meta_chunk = chunks.iter()
+        let meta_chunk = chunks
+            .iter()
             .find(|(k, _)| *k == EXTRA_KIND_TABLE_METADATA)
             .expect("Table metadata chunk should exist");
         // Format: [col_count: u8, (align: u8, char_width: u16 LE)*N]
         assert_eq!(meta_chunk.1[0], 2); // 2 columns
         assert_eq!(meta_chunk.1[1], 1); // Left align
-        // Column widths follow (u16 LE per column after each align byte)
-        assert!(meta_chunk.1.len() >= 7, "Expected 1+2*3=7 bytes, got {}", meta_chunk.1.len());
+                                        // Column widths follow (u16 LE per column after each align byte)
+        assert!(
+            meta_chunk.1.len() >= 7,
+            "Expected 1+2*3=7 bytes, got {}",
+            meta_chunk.1.len()
+        );
     }
 
     #[test]
     fn test_text_buffer_has_table_separators() {
         let (_, text, _) = get_spans(to_spans("| A | B |\n|---|---|\n| 1 | 2 |"));
         // Table cells should be tab-separated, rows newline-separated
-        assert!(text.contains("\t"), "Cell separators should be tabs, got: {:?}", text);
+        assert!(
+            text.contains("\t"),
+            "Cell separators should be tabs, got: {:?}",
+            text
+        );
         assert!(text.contains("\n"), "Row separators should be newlines");
     }
 

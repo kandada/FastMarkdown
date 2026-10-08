@@ -9,15 +9,20 @@ fn test_consecutive_text() {
     let output = to_spans("**bold**normal*italic*");
     let spans = unsafe { std::slice::from_raw_parts(output.spans, output.span_count as usize) };
     let text = unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(output.text, output.text_len as usize))
-            .unwrap()
+        std::str::from_utf8(std::slice::from_raw_parts(
+            output.text,
+            output.text_len as usize,
+        ))
+        .unwrap()
     };
     assert!(text.contains("bold"));
     assert!(text.contains("normal"));
     assert!(text.contains("italic"));
     assert!(spans.iter().any(|s| s.is_bold()));
     assert!(spans.iter().any(|s| s.is_italic()));
-    unsafe { fastmarkdown::free_spans(output); }
+    unsafe {
+        fastmarkdown::free_spans(output);
+    }
 }
 
 #[test]
@@ -32,7 +37,9 @@ fn test_offset_monotonic() {
     for w in spans.windows(2) {
         assert!(w[0].offset <= w[1].offset);
     }
-    unsafe { fastmarkdown::free_spans(output); }
+    unsafe {
+        fastmarkdown::free_spans(output);
+    }
 }
 
 #[test]
@@ -41,7 +48,10 @@ fn test_large_input() {
     // Generate a large markdown document
     for i in 0..500 {
         md.push_str(&format!("# Section {}\n\n", i));
-        md.push_str(&format!("This is paragraph {} with **bold** and `code`.\n\n", i));
+        md.push_str(&format!(
+            "This is paragraph {} with **bold** and `code`.\n\n",
+            i
+        ));
         md.push_str("- item a\n- item b\n- item c\n\n");
         md.push_str(&format!("| A | B |\n|---|---|\n| {} | {} |\n\n", i, i * 2));
     }
@@ -53,7 +63,9 @@ fn test_large_input() {
 
     let output = to_spans(&md);
     assert!(output.span_count > 100);
-    unsafe { fastmarkdown::free_spans(output); }
+    unsafe {
+        fastmarkdown::free_spans(output);
+    }
 }
 
 #[test]
@@ -66,11 +78,16 @@ fn test_unicode() {
 
     let output = to_spans(md);
     let text = unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(output.text, output.text_len as usize))
-            .unwrap()
+        std::str::from_utf8(std::slice::from_raw_parts(
+            output.text,
+            output.text_len as usize,
+        ))
+        .unwrap()
     };
     assert!(text.contains("中文"));
-    unsafe { fastmarkdown::free_spans(output); }
+    unsafe {
+        fastmarkdown::free_spans(output);
+    }
 }
 
 #[test]
@@ -79,8 +96,11 @@ fn test_multibyte_offsets() {
     let md = "Hello 🌍 **world**";
     let output = to_spans(md);
     let text = unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(output.text, output.text_len as usize))
-            .unwrap()
+        std::str::from_utf8(std::slice::from_raw_parts(
+            output.text,
+            output.text_len as usize,
+        ))
+        .unwrap()
     };
     let spans = unsafe { std::slice::from_raw_parts(output.spans, output.span_count as usize) };
 
@@ -91,10 +111,13 @@ fn test_multibyte_offsets() {
 
     // Check the bold span contains "world"
     let bold_span = spans.iter().find(|s| s.is_bold()).unwrap();
-    let bold_text = &text[bold_span.offset as usize..(bold_span.offset + bold_span.length) as usize];
+    let bold_text =
+        &text[bold_span.offset as usize..(bold_span.offset + bold_span.length) as usize];
     assert_eq!(bold_text, "world");
 
-    unsafe { fastmarkdown::free_spans(output); }
+    unsafe {
+        fastmarkdown::free_spans(output);
+    }
 }
 
 #[test]
@@ -209,7 +232,9 @@ Final paragraph with [link](https://example.com).
     let output = to_spans(md);
     let spans = unsafe { std::slice::from_raw_parts(output.spans, output.span_count as usize) };
     assert!(spans.len() > 10);
-    unsafe { fastmarkdown::free_spans(output); }
+    unsafe {
+        fastmarkdown::free_spans(output);
+    }
 }
 
 #[test]

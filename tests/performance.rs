@@ -42,7 +42,9 @@ fn test_spans_generation_is_fast() {
         elapsed
     );
 
-    unsafe { fastmarkdown::free_spans(output); }
+    unsafe {
+        fastmarkdown::free_spans(output);
+    }
 }
 
 #[test]
@@ -66,8 +68,15 @@ fn test_plain_text_is_fast() {
 #[test]
 fn test_streaming_is_fast() {
     let chunks: Vec<&str> = vec![
-        "# Hello\n\n", "This is a ", "**bold** ", "and *italic* ", "paragraph.\n\n",
-        "- item 1\n", "- item 2\n", "- item 3\n\n", "```\ncode\n```\n",
+        "# Hello\n\n",
+        "This is a ",
+        "**bold** ",
+        "and *italic* ",
+        "paragraph.\n\n",
+        "- item 1\n",
+        "- item 2\n",
+        "- item 3\n\n",
+        "```\ncode\n```\n",
     ];
 
     let start = std::time::Instant::now();
@@ -99,9 +108,18 @@ fn test_math_detection_is_fast() {
 
 #[test]
 fn test_large_table_performance() {
-    let mut md = String::from("| Col1 | Col2 | Col3 | Col4 | Col5 |\n|------|------|------|------|------|\n");
+    let mut md = String::from(
+        "| Col1 | Col2 | Col3 | Col4 | Col5 |\n|------|------|------|------|------|\n",
+    );
     for i in 0..200 {
-        md.push_str(&format!("| {} | {} | {} | {} | {} |\n", i, i * 2, i * 3, i * 4, i * 5));
+        md.push_str(&format!(
+            "| {} | {} | {} | {} | {} |\n",
+            i,
+            i * 2,
+            i * 3,
+            i * 4,
+            i * 5
+        ));
     }
 
     let start = std::time::Instant::now();
@@ -109,7 +127,11 @@ fn test_large_table_performance() {
     let elapsed = start.elapsed();
 
     assert!(html.contains("<table>"));
-    assert!(elapsed.as_millis() < 500, "Large table render took {:?}", elapsed);
+    assert!(
+        elapsed.as_millis() < 500,
+        "Large table render took {:?}",
+        elapsed
+    );
 }
 
 #[test]
@@ -120,7 +142,9 @@ fn test_no_leak_with_many_calls() {
     for _ in 0..100 {
         let output = to_spans(md);
         assert!(output.span_count > 0);
-        unsafe { fastmarkdown::free_spans(output); }
+        unsafe {
+            fastmarkdown::free_spans(output);
+        }
 
         let html = to_html(md);
         assert!(!html.is_empty());
@@ -148,5 +172,7 @@ fn test_zero_allocation_for_empty() {
     let output = to_spans("");
     assert_eq!(output.span_count, 0);
     assert_eq!(output.text_len, 0);
-    unsafe { fastmarkdown::free_spans(output); }
+    unsafe {
+        fastmarkdown::free_spans(output);
+    }
 }

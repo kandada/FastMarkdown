@@ -104,7 +104,15 @@ impl Span {
         block_depth: u8,
         block_seq: u16,
     ) -> Self {
-        Self { offset, length, flags, block_type, extra_len, block_depth, block_seq }
+        Self {
+            offset,
+            length,
+            flags,
+            block_type,
+            extra_len,
+            block_depth,
+            block_seq,
+        }
     }
 
     pub fn is_bold(&self) -> bool {
@@ -136,8 +144,17 @@ impl Span {
     }
 
     pub fn has_any_style(&self) -> bool {
-        self.flags & (FLAG_BOLD | FLAG_ITALIC | FLAG_STRIKETHROUGH | FLAG_INLINE_CODE
-            | FLAG_LINK | FLAG_IMAGE | FLAG_MATH | FLAG_SUBSCRIPT | FLAG_SUPERSCRIPT) != 0
+        self.flags
+            & (FLAG_BOLD
+                | FLAG_ITALIC
+                | FLAG_STRIKETHROUGH
+                | FLAG_INLINE_CODE
+                | FLAG_LINK
+                | FLAG_IMAGE
+                | FLAG_MATH
+                | FLAG_SUBSCRIPT
+                | FLAG_SUPERSCRIPT)
+            != 0
     }
 
     pub fn is_subscript(&self) -> bool {
@@ -152,11 +169,7 @@ impl Span {
 impl SpanOutput {
     /// 从拥有的数据创建 SpanOutput（用于测试和内部使用）
     /// 调用者必须保持这些 buffer 存活
-    pub unsafe fn from_buffers(
-        text: &[u8],
-        spans: &[Span],
-        extra: &[u8],
-    ) -> Self {
+    pub unsafe fn from_buffers(text: &[u8], spans: &[Span], extra: &[u8]) -> Self {
         Self {
             text: text.as_ptr(),
             text_len: text.len() as u32,

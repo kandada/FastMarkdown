@@ -9,7 +9,9 @@ fn test_stream_single_chunk() {
     let output = stream.append("Hello **world**");
 
     assert!(output.span_count > 0);
-    let spans = unsafe { std::slice::from_raw_parts(output.spans as *const Span, output.span_count as usize) };
+    let spans = unsafe {
+        std::slice::from_raw_parts(output.spans as *const Span, output.span_count as usize)
+    };
     assert!(spans.iter().any(|s| s.is_bold()));
 }
 
@@ -21,8 +23,11 @@ fn test_stream_multiple_chunks() {
     let output = stream.append("**bold text**");
 
     let text = unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(output.text, output.text_len as usize))
-            .unwrap()
+        std::str::from_utf8(std::slice::from_raw_parts(
+            output.text,
+            output.text_len as usize,
+        ))
+        .unwrap()
     };
     assert!(text.contains("Hello"));
     assert!(text.contains("bold text"));
@@ -49,8 +54,11 @@ fn test_stream_reset() {
 
     let output = stream.append("second message");
     let text = unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(output.text, output.text_len as usize))
-            .unwrap()
+        std::str::from_utf8(std::slice::from_raw_parts(
+            output.text,
+            output.text_len as usize,
+        ))
+        .unwrap()
     };
     assert!(text.contains("second message"));
     assert!(!text.contains("first message"));
@@ -74,8 +82,11 @@ fn test_stream_progressive_building() {
     // Build a markdown document chunk by chunk
     let output1 = stream.append("# Title\n");
     let text1 = unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(output1.text, output1.text_len as usize))
-            .unwrap()
+        std::str::from_utf8(std::slice::from_raw_parts(
+            output1.text,
+            output1.text_len as usize,
+        ))
+        .unwrap()
     };
     assert!(text1.contains("Title"));
 
@@ -83,8 +94,11 @@ fn test_stream_progressive_building() {
     let output3 = stream.append("**bold**");
 
     let text3 = unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(output3.text, output3.text_len as usize))
-            .unwrap()
+        std::str::from_utf8(std::slice::from_raw_parts(
+            output3.text,
+            output3.text_len as usize,
+        ))
+        .unwrap()
     };
     assert!(text3.contains("Title"));
     assert!(text3.contains("bold"));
@@ -101,13 +115,18 @@ fn test_stream_code_block_progressive() {
     let output = stream.append("}\n```");
 
     let text = unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(output.text, output.text_len as usize))
-            .unwrap()
+        std::str::from_utf8(std::slice::from_raw_parts(
+            output.text,
+            output.text_len as usize,
+        ))
+        .unwrap()
     };
     assert!(text.contains("fn main()"));
     assert!(text.contains("println"));
 
-    let spans = unsafe { std::slice::from_raw_parts(output.spans as *const Span, output.span_count as usize) };
+    let spans = unsafe {
+        std::slice::from_raw_parts(output.spans as *const Span, output.span_count as usize)
+    };
     assert!(spans.iter().any(|s| s.block_type == BLOCK_CODE));
 }
 
@@ -119,8 +138,12 @@ fn test_stream_table_progressive() {
     stream.append("|------|-----|\n");
     let output = stream.append("| Alice | 30 |\n");
 
-    let spans = unsafe { std::slice::from_raw_parts(output.spans as *const Span, output.span_count as usize) };
-    assert!(spans.iter().any(|s| s.block_type == BLOCK_TABLE_HEADER_CELL));
+    let spans = unsafe {
+        std::slice::from_raw_parts(output.spans as *const Span, output.span_count as usize)
+    };
+    assert!(spans
+        .iter()
+        .any(|s| s.block_type == BLOCK_TABLE_HEADER_CELL));
 }
 
 #[test]
@@ -132,8 +155,11 @@ fn test_stream_snapshot_owned() {
     let output = snapshot.as_output();
 
     let text = unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(output.text, output.text_len as usize))
-            .unwrap()
+        std::str::from_utf8(std::slice::from_raw_parts(
+            output.text,
+            output.text_len as usize,
+        ))
+        .unwrap()
     };
     assert!(text.contains("world"));
 
@@ -141,8 +167,11 @@ fn test_stream_snapshot_owned() {
     stream.append("\nMore text");
     // The snapshot should still be valid because OwnedSpanOutput owns its memory
     let text2 = unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(output.text, output.text_len as usize))
-            .unwrap()
+        std::str::from_utf8(std::slice::from_raw_parts(
+            output.text,
+            output.text_len as usize,
+        ))
+        .unwrap()
     };
     assert_eq!(text2, text);
 }
@@ -183,8 +212,7 @@ fn test_stream_fast_path_avoid_full_reparse() {
     let out = stream.append("Paragraph");
 
     let text = unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(out.text, out.text_len as usize))
-            .unwrap()
+        std::str::from_utf8(std::slice::from_raw_parts(out.text, out.text_len as usize)).unwrap()
     };
     assert!(text.contains("Title"));
     assert!(text.contains("Paragraph"));
@@ -193,8 +221,11 @@ fn test_stream_fast_path_avoid_full_reparse() {
     // Now extend the paragraph with plain text (should use fast path)
     let out2 = stream.append(" with more content");
     let text2 = unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(out2.text, out2.text_len as usize))
-            .unwrap()
+        std::str::from_utf8(std::slice::from_raw_parts(
+            out2.text,
+            out2.text_len as usize,
+        ))
+        .unwrap()
     };
     assert!(text2.contains("with more content"));
 
@@ -202,11 +233,15 @@ fn test_stream_fast_path_avoid_full_reparse() {
     let expected = to_spans("# Title\n\nParagraph with more content");
     let expected_text = unsafe {
         std::str::from_utf8(std::slice::from_raw_parts(
-            expected.text, expected.text_len as usize,
-        )).unwrap()
+            expected.text,
+            expected.text_len as usize,
+        ))
+        .unwrap()
     };
     assert_eq!(text2, expected_text);
-    unsafe { free_spans(expected); }
+    unsafe {
+        free_spans(expected);
+    }
 }
 
 #[test]
@@ -217,9 +252,8 @@ fn test_stream_fast_path_with_special_chars_falls_back() {
 
     // * triggers fallback to full parse
     let out = stream.append(" *italic*");
-    let spans = unsafe {
-        std::slice::from_raw_parts(out.spans as *const Span, out.span_count as usize)
-    };
+    let spans =
+        unsafe { std::slice::from_raw_parts(out.spans as *const Span, out.span_count as usize) };
     assert!(spans.iter().any(|s| s.is_italic()), "Should detect italic");
 }
 
@@ -232,8 +266,7 @@ fn test_stream_fast_path_with_code_block_falls_back() {
     // Appending to code block — should use slow path
     let out = stream.append("fn main() {}\n");
     let text = unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(out.text, out.text_len as usize))
-            .unwrap()
+        std::str::from_utf8(std::slice::from_raw_parts(out.text, out.text_len as usize)).unwrap()
     };
     assert!(text.contains("fn main()"));
 }
@@ -243,15 +276,14 @@ fn test_stream_fast_path_many_small_chunks() {
     // Simulate token-level streaming (AI agents)
     let mut stream = StreamRenderer::new(MarkdownOptions::default());
 
-    let tokens: [&str; 11] = ["H","e","l","l","o"," ","W","o","r","l","d"];
+    let tokens: [&str; 11] = ["H", "e", "l", "l", "o", " ", "W", "o", "r", "l", "d"];
     for ch in &tokens {
         stream.append(ch);
     }
 
     let out = stream.append("!");
     let text = unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(out.text, out.text_len as usize))
-            .unwrap()
+        std::str::from_utf8(std::slice::from_raw_parts(out.text, out.text_len as usize)).unwrap()
     };
     assert_eq!(text, "Hello World!");
 }
@@ -264,8 +296,7 @@ fn test_stream_fast_path_reset_clears_state() {
 
     let out = stream.append("Second");
     let text = unsafe {
-        std::str::from_utf8(std::slice::from_raw_parts(out.text, out.text_len as usize))
-            .unwrap()
+        std::str::from_utf8(std::slice::from_raw_parts(out.text, out.text_len as usize)).unwrap()
     };
     assert_eq!(text, "Second");
 }

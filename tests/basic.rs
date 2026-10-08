@@ -54,7 +54,12 @@ fn test_headings() {
         let md = format!("{} Heading {}", prefix, level);
         let html = to_html(&md);
         let tag = format!("<h{}>", level);
-        assert!(html.contains(&tag), "Expected {} in output for h{}", tag, level);
+        assert!(
+            html.contains(&tag),
+            "Expected {} in output for h{}",
+            tag,
+            level
+        );
     }
 }
 
@@ -117,7 +122,9 @@ fn test_unordered_list() {
 
     let output = to_spans(md);
     let spans = get_spans(&output);
-    assert!(spans.iter().any(|s| s.block_type == BLOCK_LIST_ITEM_UNORDERED));
+    assert!(spans
+        .iter()
+        .any(|s| s.block_type == BLOCK_LIST_ITEM_UNORDERED));
     free(output);
 }
 
@@ -129,7 +136,9 @@ fn test_ordered_list() {
 
     let output = to_spans(md);
     let spans = get_spans(&output);
-    assert!(spans.iter().any(|s| s.block_type == BLOCK_LIST_ITEM_ORDERED));
+    assert!(spans
+        .iter()
+        .any(|s| s.block_type == BLOCK_LIST_ITEM_ORDERED));
     free(output);
 }
 
@@ -275,5 +284,7 @@ fn get_spans(output: &SpanOutput) -> &[Span] {
 }
 
 fn free(output: SpanOutput) {
-    unsafe { fastmarkdown::free_spans(output); }
+    unsafe {
+        fastmarkdown::free_spans(output);
+    }
 }

@@ -24,9 +24,21 @@ pub const TOKEN_TYPE_COUNT: u8 = 15;
 
 /// Token name lookup (for debugging / display)
 pub static TOKEN_NAMES: &[&str; 15] = &[
-    "other", "keyword", "string", "comment", "number",
-    "function", "type", "operator", "punctuation", "variable",
-    "constant", "builtin", "entity", "markup", "regex",
+    "other",
+    "keyword",
+    "string",
+    "comment",
+    "number",
+    "function",
+    "type",
+    "operator",
+    "punctuation",
+    "variable",
+    "constant",
+    "builtin",
+    "entity",
+    "markup",
+    "regex",
 ];
 
 /// A single highlighted token: (token_type, byte_length_in_source)
@@ -45,9 +57,7 @@ pub fn highlight_code(code: &str, language: &str) -> Option<Vec<HighlightToken>>
     use syntect::parsing::{ParseState, ScopeStack, ScopeStackOp, SyntaxSet};
 
     static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
-    let ss = SYNTAX_SET.get_or_init(|| {
-        SyntaxSet::load_defaults_newlines()
-    });
+    let ss = SYNTAX_SET.get_or_init(|| SyntaxSet::load_defaults_newlines());
 
     let syntax = ss.find_syntax_by_token(language)?;
 
@@ -74,7 +84,7 @@ pub fn highlight_code(code: &str, language: &str) -> Option<Vec<HighlightToken>>
             if i > pos {
                 let text_len = i - pos;
                 let tt = map_scopes(&scope_stack);
-                merge_or_push(&mut tokens, tt, text_len as u16);
+                merge_or_push(&mut tokens, tt, text_len as u32);
             }
             match op {
                 ScopeStackOp::Push(scope) => scope_stack.push(*scope),
@@ -91,18 +101,24 @@ pub fn highlight_code(code: &str, language: &str) -> Option<Vec<HighlightToken>>
         if pos < line.len() {
             let text_len = line.len() - pos;
             let tt = map_scopes(&scope_stack);
-            merge_or_push(&mut tokens, tt, text_len as u16);
+            merge_or_push(&mut tokens, tt, text_len as u32);
         }
 
         // Add newline separator between lines (not after the last)
         if line_idx + 1 < line_count {
-            tokens.push(HighlightToken { token_type: TOKEN_OTHER, len: 1 });
+            tokens.push(HighlightToken {
+                token_type: TOKEN_OTHER,
+                len: 1,
+            });
         }
     }
 
     // Add trailing newline if present in source
     if code.ends_with('\n') && !tokens.is_empty() {
-        tokens.push(HighlightToken { token_type: TOKEN_OTHER, len: 1 });
+        tokens.push(HighlightToken {
+            token_type: TOKEN_OTHER,
+            len: 1,
+        });
     }
 
     // Verify total length matches
@@ -121,90 +137,104 @@ pub fn highlight_code(_code: &str, _language: &str) -> Option<Vec<HighlightToken
 
 #[cfg(feature = "highlight")]
 fn map_scopes(scopes: &syntect::parsing::ScopeStack) -> u8 {
-    // Format all scopes into a single combined string once, then check substrings.
-    // This avoids N separate allocations per scope per token position.
+    use std::fmt::Write;
+    thread_local! {
+        // Reused buffer: the combined scope string is built per token position.
+        static SCRATCH: std::cell::RefCell<String> = std::cell::RefCell::new(String::new());
+    }
     let slice = scopes.as_slice();
     if slice.is_empty() {
         return TOKEN_OTHER;
     }
-    let mut combined = String::new();
-    for scope in slice {
-        use std::fmt::Write;
-        write!(combined, "{} ", scope).unwrap();
-    }
-    combined.pop(); // trailing space
+    SCRATCH.with(|cell| {
+        let mut combined = cell.borrow_mut();
+        combined.clear();
+        for scope in slice {
+            let _ = write!(&mut *combined, "{} ", scope);
+        }
+        combined.pop(); // trailing space
+        let combined = combined.as_str();
 
-    if combined.contains("comment") {
-        return TOKEN_COMMENT;
-    }
-    // Must check string.regexp before string (substring order)
-    if combined.contains("string.regexp") {
-        return TOKEN_REGEX;
-    }
-    if combined.contains("string") {
-        return TOKEN_STRING;
-    }
-    if combined.contains("keyword") && !combined.contains("operator") {
-        return TOKEN_KEYWORD;
-    }
-    if combined.contains("constant.numeric") {
-        return TOKEN_NUMBER;
-    }
-    if combined.contains("entity.name.function")
-        || combined.contains("support.function")
-        || combined.contains("meta.function")
-    {
-        return TOKEN_FUNCTION;
-    }
-    if combined.contains("entity.name.type")
-        || combined.contains("support.type")
-        || combined.contains("storage.type")
-    {
-        return TOKEN_TYPE;
-    }
-    if combined.contains("keyword.operator")
-        || combined.contains("punctuation.definition")
-    {
-        return TOKEN_OPERATOR;
-    }
-    if combined.contains("punctuation")
-        || combined.contains("meta.brace")
-        || combined.contains("meta.delimiter")
-        || combined.contains("meta.group")
-    {
-        return TOKEN_PUNCTUATION;
-    }
-    if combined.contains("variable") || combined.contains("meta") {
-        return TOKEN_VARIABLE;
-    }
-    if combined.contains("constant") {
-        return TOKEN_CONSTANT;
-    }
-    if combined.contains("support") {
-        return TOKEN_BUILTIN;
-    }
-    if combined.contains("entity") {
-        return TOKEN_ENTITY;
-    }
-    if combined.contains("markup") {
-        return TOKEN_MARKUP;
-    }
+        if combined.contains("comment") {
+            return TOKEN_COMMENT;
+        }
+        // Must check string.regexp before string (substring order)
+        if combined.contains("string.regexp") {
+            return TOKEN_REGEX;
+        }
+        if combined.contains("string") {
+            return TOKEN_STRING;
+        }
+        if combined.contains("keyword") && !combined.contains("operator") {
+            return TOKEN_KEYWORD;
+        }
+        if combined.contains("constant.numeric") {
+            return TOKEN_NUMBER;
+        }
+        if combined.contains("entity.name.function")
+            || combined.contains("support.function")
+            || combined.contains("meta.function")
+        {
+            return TOKEN_FUNCTION;
+        }
+        if combined.contains("entity.name.type")
+            || combined.contains("support.type")
+            || combined.contains("storage.type")
+        {
+            return TOKEN_TYPE;
+        }
+        if combined.contains("keyword.operator") || combined.contains("punctuation.definition") {
+            return TOKEN_OPERATOR;
+        }
+        if combined.contains("punctuation")
+            || combined.contains("meta.brace")
+            || combined.contains("meta.delimiter")
+            || combined.contains("meta.group")
+        {
+            return TOKEN_PUNCTUATION;
+        }
+        if combined.contains("variable") || combined.contains("meta") {
+            return TOKEN_VARIABLE;
+        }
+        if combined.contains("constant") {
+            return TOKEN_CONSTANT;
+        }
+        if combined.contains("support") {
+            return TOKEN_BUILTIN;
+        }
+        if combined.contains("entity") {
+            return TOKEN_ENTITY;
+        }
+        if combined.contains("markup") {
+            return TOKEN_MARKUP;
+        }
 
-    TOKEN_OTHER
+        TOKEN_OTHER
+    })
 }
 
 #[cfg(feature = "highlight")]
-fn merge_or_push(tokens: &mut Vec<HighlightToken>, tt: u8, len: u16) {
-    if len == 0 {
-        return;
-    }
-    if let Some(last) = tokens.last_mut() {
-        if last.token_type == tt {
-            last.len = last.len.saturating_add(len);
-            return;
+fn merge_or_push(tokens: &mut Vec<HighlightToken>, tt: u8, mut len: u32) {
+    // Token lengths are u16 in the wire format; split runs longer than 65535
+    // into multiple tokens instead of truncating (which used to make the total
+    // mismatch and silently disable highlighting for the whole block).
+    while len > 0 {
+        if let Some(last) = tokens.last_mut() {
+            if last.token_type == tt && last.len < u16::MAX {
+                let room = (u16::MAX - last.len) as u32;
+                let add = room.min(len);
+                last.len += add as u16;
+                len -= add;
+                continue;
+            }
         }
+        let take = len.min(u16::MAX as u32) as u16;
+        tokens.push(HighlightToken {
+            token_type: tt,
+            len: take,
+        });
+        len -= take as u32;
     }
-    tokens.push(HighlightToken { token_type: tt, len });
 }
 
 #[cfg(test)]
@@ -218,8 +248,13 @@ mod tests {
         if let Some(ref tokens) = tokens {
             let total: usize = tokens.iter().map(|t| t.len as usize).sum();
             assert_eq!(total, code.len(), "Token lengths must sum to code length");
-            let types: std::collections::HashSet<u8> = tokens.iter().map(|t| t.token_type).collect();
-            assert!(types.len() >= 2, "Should have multiple token types, got {:?}", tokens);
+            let types: std::collections::HashSet<u8> =
+                tokens.iter().map(|t| t.token_type).collect();
+            assert!(
+                types.len() >= 2,
+                "Should have multiple token types, got {:?}",
+                tokens
+            );
         }
     }
 
@@ -253,6 +288,28 @@ mod tests {
         let tokens = highlight_code("", "rust");
         if let Some(tokens) = tokens {
             assert!(tokens.is_empty());
+        }
+    }
+
+    #[cfg(feature = "highlight")]
+    #[test]
+    fn merge_or_push_splits_long_runs() {
+        // Long same-type runs must be split into <=65535 tokens, not truncated,
+        // so the total still equals the source length.
+        let mut tokens = Vec::new();
+        merge_or_push(&mut tokens, TOKEN_STRING, 200_000);
+        let total: usize = tokens.iter().map(|t| t.len as usize).sum();
+        assert_eq!(total, 200_000);
+        assert!(tokens.len() >= 4, "long run must split: {}", tokens.len());
+    }
+
+    #[cfg(feature = "highlight")]
+    #[test]
+    fn big_code_highlight_total_matches() {
+        let code = format!("// {}\n", "x".repeat(100_000));
+        if let Some(tokens) = highlight_code(&code, "rust") {
+            let total: usize = tokens.iter().map(|t| t.len as usize).sum();
+            assert_eq!(total, code.len(), "token lengths must sum to code length");
         }
     }
 }

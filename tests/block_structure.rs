@@ -8,7 +8,9 @@ fn get_spans(output: &SpanOutput) -> &[Span] {
 }
 
 fn free(output: SpanOutput) {
-    unsafe { fastmarkdown::free_spans(output); }
+    unsafe {
+        fastmarkdown::free_spans(output);
+    }
 }
 
 // ============================================================
@@ -25,7 +27,11 @@ fn test_block_seq_increments_per_block() {
     let mut seqs: Vec<u16> = spans.iter().map(|s| s.block_seq).collect();
     seqs.dedup();
     // Each block (heading, para1, para2) gets a unique seq
-    assert!(seqs.len() >= 3, "Expected >=3 unique seq values, got {}", seqs.len());
+    assert!(
+        seqs.len() >= 3,
+        "Expected >=3 unique seq values, got {}",
+        seqs.len()
+    );
     free(output);
 }
 
@@ -38,7 +44,10 @@ fn test_block_seq_same_within_block() {
     // All spans in the same paragraph have the same seq
     let first_seq = spans[0].block_seq;
     for s in spans.iter() {
-        assert_eq!(s.block_seq, first_seq, "All spans in one paragraph should share seq");
+        assert_eq!(
+            s.block_seq, first_seq,
+            "All spans in one paragraph should share seq"
+        );
     }
     free(output);
 }
@@ -50,15 +59,21 @@ fn test_block_seq_different_across_blocks() {
     let spans = get_spans(&output);
 
     // Each heading is a separate block→different seq
-    let h1_seqs: Vec<u16> = spans.iter()
+    let h1_seqs: Vec<u16> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_HEADING_H1)
-        .map(|s| s.block_seq).collect();
-    let h2_seqs: Vec<u16> = spans.iter()
+        .map(|s| s.block_seq)
+        .collect();
+    let h2_seqs: Vec<u16> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_HEADING_H2)
-        .map(|s| s.block_seq).collect();
-    let h3_seqs: Vec<u16> = spans.iter()
+        .map(|s| s.block_seq)
+        .collect();
+    let h3_seqs: Vec<u16> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_HEADING_H3)
-        .map(|s| s.block_seq).collect();
+        .map(|s| s.block_seq)
+        .collect();
 
     assert!(!h1_seqs.is_empty());
     assert!(!h2_seqs.is_empty());
@@ -74,7 +89,8 @@ fn test_block_seq_in_code_block() {
     let output = to_spans(md);
     let spans = get_spans(&output);
 
-    let code_spans: Vec<&Span> = spans.iter()
+    let code_spans: Vec<&Span> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_CODE)
         .collect();
     assert!(!code_spans.is_empty(), "Should have code block spans");
@@ -93,10 +109,12 @@ fn test_block_seq_in_table() {
     let output = to_spans(md);
     let spans = get_spans(&output);
 
-    let header_spans: Vec<&Span> = spans.iter()
+    let header_spans: Vec<&Span> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_TABLE_HEADER_CELL)
         .collect();
-    let cell_spans: Vec<&Span> = spans.iter()
+    let cell_spans: Vec<&Span> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_TABLE_CELL)
         .collect();
 
@@ -115,7 +133,8 @@ fn test_block_seq_inlist() {
     let output = to_spans(md);
     let spans = get_spans(&output);
 
-    let list_spans: Vec<&Span> = spans.iter()
+    let list_spans: Vec<&Span> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_LIST_ITEM_UNORDERED)
         .collect();
     assert!(list_spans.len() >= 3, "Expected >=3 list item spans");
@@ -123,7 +142,11 @@ fn test_block_seq_inlist() {
     // Each list item is a new block → different seq
     let mut seqs: Vec<u16> = list_spans.iter().map(|s| s.block_seq).collect();
     seqs.dedup();
-    assert!(seqs.len() >= 3, "Each list item should have unique seq, got {}", seqs.len());
+    assert!(
+        seqs.len() >= 3,
+        "Each list item should have unique seq, got {}",
+        seqs.len()
+    );
     free(output);
 }
 
@@ -149,14 +172,19 @@ fn test_block_depth_increases_for_list() {
     let output = to_spans(md);
     let spans = get_spans(&output);
 
-    let list_spans: Vec<&Span> = spans.iter()
+    let list_spans: Vec<&Span> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_LIST_ITEM_UNORDERED)
         .collect();
     assert!(!list_spans.is_empty());
 
     // List is a nesting block → depth >= 1
     for s in &list_spans {
-        assert_eq!(s.block_depth, 1, "Top-level list items have depth 1, got {}", s.block_depth);
+        assert_eq!(
+            s.block_depth, 1,
+            "Top-level list items have depth 1, got {}",
+            s.block_depth
+        );
     }
     free(output);
 }
@@ -167,7 +195,8 @@ fn test_block_depth_nested_list() {
     let output = to_spans(md);
     let spans = get_spans(&output);
 
-    let list_spans: Vec<&Span> = spans.iter()
+    let list_spans: Vec<&Span> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_LIST_ITEM_UNORDERED)
         .collect();
 
@@ -176,7 +205,11 @@ fn test_block_depth_nested_list() {
     let mut depths: Vec<u8> = list_spans.iter().map(|s| s.block_depth).collect();
     depths.sort();
     depths.dedup();
-    assert!(depths.len() >= 2, "Expected at least 2 distinct depth levels, got {:?}", depths);
+    assert!(
+        depths.len() >= 2,
+        "Expected at least 2 distinct depth levels, got {:?}",
+        depths
+    );
     free(output);
 }
 
@@ -186,13 +219,18 @@ fn test_block_depth_in_blockquote() {
     let output = to_spans(md);
     let spans = get_spans(&output);
 
-    let bq_spans: Vec<&Span> = spans.iter()
+    let bq_spans: Vec<&Span> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_BLOCKQUOTE)
         .collect();
 
     if !bq_spans.is_empty() {
         for s in &bq_spans {
-            assert!(s.block_depth >= 1, "Blockquote should have depth >= 1, got {}", s.block_depth);
+            assert!(
+                s.block_depth >= 1,
+                "Blockquote should have depth >= 1, got {}",
+                s.block_depth
+            );
         }
     }
     free(output);
@@ -208,18 +246,28 @@ fn test_table_metadata_in_extra_data() {
     let output = to_spans(md);
 
     // extra_data uses self-describing chunks: [kind: u8, data_len: u16 LE, data]
-    let extra = unsafe {
-        std::slice::from_raw_parts(output.extra_data, output.extra_data_len as usize)
-    };
+    let extra =
+        unsafe { std::slice::from_raw_parts(output.extra_data, output.extra_data_len as usize) };
 
     // Should have at least one chunk with kind=EXTRA_KIND_TABLE_METADATA
-    assert!(extra.len() >= 6, "Extra data too small: {} bytes", extra.len());
-    assert_eq!(extra[0], EXTRA_KIND_TABLE_METADATA, "First chunk should be table metadata");
+    assert!(
+        extra.len() >= 6,
+        "Extra data too small: {} bytes",
+        extra.len()
+    );
+    assert_eq!(
+        extra[0], EXTRA_KIND_TABLE_METADATA,
+        "First chunk should be table metadata"
+    );
     let data_len = u16::from_le_bytes([extra[1], extra[2]]) as usize;
     let data = &extra[3..3 + data_len];
     assert_eq!(data[0], 3, "Expected 3 columns");
     // Format: [col_count, (align: u8, char_width: u16 LE)*N] — 10 bytes
-    assert!(data.len() >= 10, "Expected at least 10 bytes, got {}", data.len());
+    assert!(
+        data.len() >= 10,
+        "Expected at least 10 bytes, got {}",
+        data.len()
+    );
     // Alignments at offsets 1, 4, 7
     for i in &[1, 4, 7] {
         let align = data[*i];
@@ -234,9 +282,8 @@ fn test_table_metadata_alignment_values() {
     let md = "| Left | Center | Right |\n|:-----|:------:|------:|\n| a | b | c |";
     let output = to_spans(md);
 
-    let extra = unsafe {
-        std::slice::from_raw_parts(output.extra_data, output.extra_data_len as usize)
-    };
+    let extra =
+        unsafe { std::slice::from_raw_parts(output.extra_data, output.extra_data_len as usize) };
 
     assert_eq!(extra[0], EXTRA_KIND_TABLE_METADATA);
     let data_len = u16::from_le_bytes([extra[1], extra[2]]) as usize;
@@ -270,7 +317,11 @@ fn parse_extra_chunks(extra: &[u8]) -> Vec<(u8, Vec<u8>)> {
 
 #[test]
 fn test_span_struct_size() {
-    assert_eq!(std::mem::size_of::<Span>(), 20, "Span size check (4+4+4+4+1+1+2=20)");
+    assert_eq!(
+        std::mem::size_of::<Span>(),
+        20,
+        "Span size check (4+4+4+4+1+1+2=20)"
+    );
 }
 
 // ============================================================
@@ -302,7 +353,11 @@ fn test_file_preview_reconstruct_blocks_by_seq() {
     }
 
     // We have: heading, para1, code, para2, list_item_a, list_item_b = 6 blocks
-    assert!(blocks.len() >= 5, "Expected >=5 blocks, got {}", blocks.len());
+    assert!(
+        blocks.len() >= 5,
+        "Expected >=5 blocks, got {}",
+        blocks.len()
+    );
 
     // Each block has a consistent block_type
     for block in &blocks {
@@ -325,27 +380,37 @@ fn test_file_preview_table_cell_count() {
     let md = "| A | B | C |\n|---|---|---|\n| 1 | 2 | 3 |\n| 4 | 5 | 6 |";
     let output = to_spans(md);
     let spans = get_spans(&output);
-    let extra = unsafe {
-        std::slice::from_raw_parts(output.extra_data, output.extra_data_len as usize)
-    };
+    let extra =
+        unsafe { std::slice::from_raw_parts(output.extra_data, output.extra_data_len as usize) };
 
     // Parse self-describing extra_data chunk: [kind: u8, len: u16 LE, data]
     let chunks = parse_extra_chunks(extra);
-    let meta = chunks.iter()
+    let meta = chunks
+        .iter()
         .find(|(k, _)| *k == EXTRA_KIND_TABLE_METADATA)
         .expect("Table metadata chunk not found");
     let col_count = meta.1[0] as usize;
     assert_eq!(col_count, 3);
 
-    let header_cells: Vec<&Span> = spans.iter()
+    let header_cells: Vec<&Span> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_TABLE_HEADER_CELL)
         .collect();
-    assert_eq!(header_cells.len(), col_count, "Header cell count should match col_count");
+    assert_eq!(
+        header_cells.len(),
+        col_count,
+        "Header cell count should match col_count"
+    );
 
-    let data_cells: Vec<&Span> = spans.iter()
+    let data_cells: Vec<&Span> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_TABLE_CELL)
         .collect();
-    assert_eq!(data_cells.len() % col_count, 0, "Data cells should be divisible by col_count");
+    assert_eq!(
+        data_cells.len() % col_count,
+        0,
+        "Data cells should be divisible by col_count"
+    );
 
     let rows = data_cells.len() / col_count;
     assert_eq!(rows, 2, "Expected 2 rows of data");
@@ -359,7 +424,8 @@ fn test_file_preview_indent_by_depth() {
     let output = to_spans(md);
     let spans = get_spans(&output);
 
-    let list_spans: Vec<&Span> = spans.iter()
+    let list_spans: Vec<&Span> = spans
+        .iter()
         .filter(|s| s.block_type == BLOCK_LIST_ITEM_UNORDERED)
         .collect();
 
@@ -381,7 +447,11 @@ fn test_file_preview_indent_by_depth() {
             break;
         }
     }
-    assert!(max_seen >= 2, "Expected nesting depth >= 2, got {}", max_seen);
+    assert!(
+        max_seen >= 2,
+        "Expected nesting depth >= 2, got {}",
+        max_seen
+    );
 
     free(output);
 }

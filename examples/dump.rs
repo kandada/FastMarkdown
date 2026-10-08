@@ -7,11 +7,19 @@ fn main() {
     let spans = unsafe { std::slice::from_raw_parts(out.spans, out.span_count as usize) };
     let extra = unsafe { std::slice::from_raw_parts(out.extra_data, out.extra_data_len as usize) };
     println!("TEXT({}): {:?}", text.len(), text);
-    println!("EXTRA({}): {:?}", extra.len(), String::from_utf8_lossy(extra));
+    println!(
+        "EXTRA({}): {:?}",
+        extra.len(),
+        String::from_utf8_lossy(extra)
+    );
     for s in spans {
-        let sub = String::from_utf8_lossy(&text.as_bytes()[s.offset as usize..(s.offset + s.length) as usize]);
-        println!("  off={:4} len={:4} flags={:#08x} blk={:2} depth={} seq={:3} extra_len={} text={:?}",
-            s.offset, s.length, s.flags, s.block_type, s.block_depth, s.block_seq, s.extra_len, sub);
+        let sub = String::from_utf8_lossy(
+            &text.as_bytes()[s.offset as usize..(s.offset + s.length) as usize],
+        );
+        println!(
+            "  off={:4} len={:4} flags={:#08x} blk={:2} depth={} seq={:3} extra_len={} text={:?}",
+            s.offset, s.length, s.flags, s.block_type, s.block_depth, s.block_seq, s.extra_len, sub
+        );
     }
     unsafe { free_spans(out) };
 }
